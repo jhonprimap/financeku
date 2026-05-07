@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   collection, doc,
   onSnapshot, addDoc, setDoc, updateDoc, deleteDoc,
-  query, orderBy, serverTimestamp, writeBatch, getDocs,
+  query, orderBy, serverTimestamp, writeBatch, getDocs, getDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -26,8 +26,13 @@ function useCollection(uid, collectionName, order = "createdAt") {
 
   const add = useCallback(async (item) => {
     const ref = collection(db, "users", uid, collectionName);
-    const { id: _id, ...data } = item; // strip local id
-    await addDoc(ref, { ...data, createdAt: serverTimestamp() });
+    const { id: _id, ...data } = item;
+    const docRef = doc(ref, item.id || undefined);
+    if (item.id) {
+      await setDoc(docRef, { ...data, createdAt: serverTimestamp() });
+    } else {
+      await addDoc(ref, { ...data, createdAt: serverTimestamp() });
+    }
   }, [uid, collectionName]);
 
   const update = useCallback(async (id, item) => {
@@ -49,30 +54,37 @@ function useCollection(uid, collectionName, order = "createdAt") {
   return { data, loading, add, update, remove, upsert };
 }
 
-// ─── Seed default data for new user ──────────────────────────────────────────
+// ─── Seed default data — HANYA untuk user baru (cek flag "seeded") ────────────
 export async function seedUserData(uid, initialData) {
+  // Cek flag "seeded" di dokumen user — kalau sudah ada, JANGAN seed ulang
+  const userDoc = await getDoc(doc(db, "users", uid));
+  const userData = userDoc.data() || {};
+  if (userData.seeded === true) return; // sudah pernah di-seed, skip
+
   const batch = writeBatch(db);
 
   const collections = {
-    categories:  initialData.categories,
-    accounts:    initialData.accounts,
-    transactions:initialData.transactions,
-    goals:       initialData.goals,
-    recurrings:  initialData.recurrings,
+    categories:   initialData.categories,
+    accounts:     initialData.accounts,
+    transactions: initialData.transactions,
+    goals:        initialData.goals,
+    recurrings:   initialData.recurrings,
   };
 
   for (const [col, items] of Object.entries(collections)) {
-    // Check if already seeded
     const snap = await getDocs(collection(db, "users", uid, col));
-    if (!snap.empty) continue; // already has data, skip
-
+    if (!snap.empty) continue; // koleksi sudah ada data, skip
     for (const item of items) {
       const ref = doc(db, "users", uid, col, item.id);
       batch.set(ref, { ...item, createdAt: serverTimestamp() });
     }
   }
 
+  // Tandai user sudah di-seed agar tidak terulang lagi
+  batch.set(doc(db, "users", uid), { seeded: true }, { merge: true });
+
   await batch.commit();
+  console.log("✅ Seed data selesai untuk user:", uid);
 }
 
 // ─── User settings ────────────────────────────────────────────────────────────
@@ -95,7 +107,7 @@ export function useUserSettings(uid) {
   return { settings, saveSettings };
 }
 
-// ─── Main data hook — bundles all collections ─────────────────────────────────
+// ─── Main data hook ───────────────────────────────────────────────────────────
 export function useFirestoreData(uid) {
   const transactions = useCollection(uid, "transactions", "date");
   const accounts     = useCollection(uid, "accounts",     "createdAt");
