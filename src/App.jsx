@@ -1031,6 +1031,7 @@ function AccountForm({onSave, initial}) {
   const set=(k,v)=>setForm(p=>({...p,[k]:v}));
   const isCreditCard = form.type==="credit_card";
   const isLiability  = ["credit_card","loan"].includes(form.type);
+  const isCustom     = form.type==="custom";
   const handleSave=(e)=>{
     e && e.stopPropagation();
     if(!form.name.trim()){ alert("Nama akun wajib diisi!"); return; }
