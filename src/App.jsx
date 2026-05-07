@@ -1012,6 +1012,7 @@ const ACCOUNT_TYPES = [
   {value:"property",     label:"🏠 Properti",           color:"#06b6d4"},
   {value:"vehicle",      label:"🚗 Kendaraan",          color:"#f97316"},
   {value:"cash",         label:"💵 Kas/Tunai",          color:"#84cc16"},
+  {value:"custom",       label:"✨ Kustom (Buat Sendiri)", color:"#6366f1"},
 ];
 const ACC_COLORS=["#3b82f6","#10b981","#8b5cf6","#f59e0b","#ec4899","#14b8a6","#f97316","#ef4444","#06b6d4","#84cc16"];
 
@@ -1061,6 +1062,34 @@ function AccountForm({onSave, initial}) {
           ))}
         </div>
       </div>
+
+      {/* Custom type fields */}
+      {isCustom && (
+        <div style={{background:"var(--primary)11",border:"1px solid var(--primary)33",borderRadius:"12px",padding:"14px",display:"flex",flexDirection:"column",gap:"10px"}}>
+          <p style={{margin:0,fontSize:"12px",fontWeight:700,color:"var(--primary)"}}>✨ Buat Jenis Akun Kustom</p>
+          <div style={{display:"flex",gap:"10px"}}>
+            <div style={{width:"70px"}}>
+              <label style={{fontSize:"11px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"5px"}}>Ikon (emoji)</label>
+              <input value={form.customIcon} onChange={e=>set("customIcon",e.target.value)} placeholder="🏆"
+                style={{width:"100%",padding:"9px",borderRadius:"9px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"20px",textAlign:"center",boxSizing:"border-box"}}/>
+            </div>
+            <div style={{flex:1}}>
+              <label style={{fontSize:"11px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"5px"}}>Nama Jenis Akun</label>
+              <input value={form.customLabel} onChange={e=>set("customLabel",e.target.value)} placeholder="Contoh: Dana Pensiun, Kripto..."
+                style={{width:"100%",padding:"9px 11px",borderRadius:"9px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"13px",boxSizing:"border-box"}}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+            {["🏆","💰","🎯","📊","🔐","🌏","⭐","🏋️","🎓","👨‍👩‍👧","🐄","🌾","💎","🚀","🎪"].map(em=>(
+              <button key={em} onClick={()=>set("customIcon",em)}
+                style={{width:"32px",height:"32px",borderRadius:"7px",border:`1.5px solid ${form.customIcon===em?"var(--primary)":"var(--border)"}`,
+                  background:form.customIcon===em?"var(--primary)22":"transparent",cursor:"pointer",fontSize:"16px"}}>
+                {em}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Name */}
       <div>
@@ -1117,7 +1146,8 @@ function AccountsPage() {
   const ccs    = accounts.filter(a=>a.type==="credit_card");
   const loans  = accounts.filter(a=>a.type==="loan");
   const invs   = accounts.filter(a=>["investment","gold_digital","gold_physical"].includes(a.type));
-  const assets = accounts.filter(a=>["property","vehicle"].includes(a.type));
+  const assets  = accounts.filter(a=>["property","vehicle"].includes(a.type));
+  const customs = accounts.filter(a=>a.type==="custom");
 
   const { stockPortfolioValue=0 } = useContext(AppContext);
   const totalAset = accounts.filter(a=>a.balance>0).reduce((s,a)=>s+a.balance,0) + stockPortfolioValue;
@@ -1281,6 +1311,27 @@ function AccountsPage() {
       )}
 
       {/* Modals */}
+      {/* Akun Kustom */}
+      {customs.length>0&&(
+        <div style={{marginBottom:"20px"}}>
+          <SectionHeader title="✨ Akun Kustom" onAdd={()=>{setSelected(null);setModal("add");}}/>
+          <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+            {customs.map(a=>(
+              <div key={a.id} style={{background:"var(--card-bg)",borderRadius:"14px",padding:"14px",boxShadow:"var(--shadow)",borderLeft:`4px solid ${a.color}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <p style={{margin:0,fontSize:"14px",fontWeight:700,color:"var(--text)"}}>{a.name}</p>
+                    <p style={{margin:"2px 0 0",fontSize:"11px",color:a.color}}>{a.customIcon||"✨"} {a.customLabel||"Kustom"}</p>
+                  </div>
+                  <p style={{margin:0,fontSize:"16px",fontWeight:800,color:a.balance>=0?"#10b981":"#ef4444"}}>{fmtF(a.balance)}</p>
+                </div>
+                <ActionBtns a={a}/>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {modal==="add"&&<Modal title="Tambah Akun / Aset" onClose={()=>setModal(null)}><AccountForm onSave={saveAccount}/></Modal>}
       {modal==="edit"&&selected&&<Modal title="Edit Akun" onClose={()=>{setModal(null);setSelected(null);}}><AccountForm onSave={saveAccount} initial={selected}/></Modal>}
       {confirmAccId&&<ConfirmDialog message="Hapus akun ini?" onConfirm={doDeleteAcc} onCancel={()=>setConfirmAccId(null)}/>}
