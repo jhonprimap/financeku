@@ -1954,6 +1954,23 @@ export default function App() {
 
   const makeSetterFn = (col) => (fn) => diff(col, fn);
 
+  // ── Stock portfolio value (for Net Worth calculation) ─────────────────────
+  const [stockPortfolio, setStockPortfolio] = useState([]);
+  useEffect(() => {
+    if (!user?.uid) return;
+    const ref = doc(db, "users", user.uid, "settings", "stockPortfolio");
+    const unsub = onSnapshot(ref, (snap) => {
+      if (snap.exists() && snap.data().portfolio) {
+        setStockPortfolio(snap.data().portfolio);
+      }
+    });
+    return () => unsub();
+  }, [user?.uid]);
+  const stockPortfolioValue = stockPortfolio.reduce((s,p) => {
+    const price = IDX_PRICES[p.ticker] || p.avgPrice || 0;
+    return s + price * p.lot * 100;
+  }, 0);
+
   const theme = {
     "--primary":      primaryColor,
     "--primary-dark": primaryColor + "cc",
