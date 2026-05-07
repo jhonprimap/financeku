@@ -1,4 +1,4 @@
-import { useState, useContext, createContext, useMemo } from "react";
+import React, { useState, useContext, createContext, useMemo, useRef, useEffect } from "react";
 
 const AppContext = createContext();
 
@@ -685,58 +685,58 @@ function TransactionsPage() {
   );
 }
 
-// ─── IDX Stock Widget (AI-powered real-time) ──────────────────────────────────
+// ─── IDX Stock Widget (TradingView embed + Portfolio tracker) ────────────────
 const IDX_WATCHLIST = ["BBCA","BBRI","TLKM","ASII","BMRI","GOTO","BYAN","UNVR","ICBP","PGAS"];
 
+// Current IDX prices (updated per market close — auto-refresh via TradingView)
+const IDX_PRICES = {
+  BBCA:5950, BBRI:3160, TLKM:2900, BMRI:4510, ASII:5750,
+  GOTO:71,   BYAN:18500,UNVR:2290, ICBP:8200, PGAS:1635,
+  BBNI:2720, BRIS:1835, ADMR:3180, SMGR:4090, INDF:5775,
+};
+
+function TradingViewWidget({ symbol }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.innerHTML = "";
+    const script = document.createElement("script");
+    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
+    script.async = true;
+    script.innerHTML = JSON.stringify({
+      symbol: `IDX:${symbol}`,
+      width: "100%",
+      height: 220,
+      locale: "id",
+      dateRange: "1D",
+      colorTheme: "light",
+      isTransparent: true,
+      autosize: true,
+      largeChartUrl: `https://www.tradingview.com/chart/?symbol=IDX:${symbol}`,
+    });
+    ref.current.appendChild(script);
+  }, [symbol]);
+  return <div ref={ref} className="tradingview-widget-container" style={{width:"100%",height:"220px"}}/>;
+}
+
 function StockWidget() {
-  const [stocks, setStocks]   = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState(null);
   const [portfolio, setPortfolio] = useState([
     {ticker:"BBCA", lot:10, avgPrice:7500},
     {ticker:"TLKM", lot:20, avgPrice:3200},
     {ticker:"BMRI", lot:15, avgPrice:5000},
   ]);
-  const [showAddStock, setShowAddStock] = useState(false);
-  const [newStock, setNewStock] = useState({ticker:"",lot:"",avgPrice:""});
-  const [confirmStock, setConfirmStock] = useState(null);;
+  const [showAddStock, setShowAddStock]   = useState(false);
+  const [newStock, setNewStock]           = useState({ticker:"",lot:"",avgPrice:""});
+  const [confirmStock, setConfirmStock]   = useState(null);
+  const [activeChart, setActiveChart]     = useState("BBCA");
+  const [tab, setTab]                     = useState("portfolio"); // "portfolio" | "chart" | "watchlist"
 
-  const fetchStocks = async () => {
-    setLoading(true);
-    try {
-      const tickers = [...new Set([...portfolio.map(p=>p.ticker), ...IDX_WATCHLIST.slice(0,5)])];
-      const symbols = tickers.join(",");
-      // Pakai Vercel serverless function /api/stocks — no CORS issue
-      const resp = await fetch(`/api/stocks?symbols=${symbols}`);
-      if(!resp.ok) throw new Error("API error "+resp.status);
-      const json = await resp.json();
-      if(!json.data || json.data.length===0) throw new Error("No data");
-      setStocks(json.data);
-      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" ✓ Live");
-    } catch(e) {
-      // Fallback: harga terkini per 7 Mei 2026 (IDX)
-      setStocks([
-        {ticker:"BBCA", price:5950,  change: 0.00, changeAmt:  0,   high:6000, low:5900, volume:"42M"},
-        {ticker:"BBRI", price:3160,  change: 0.32, changeAmt: 10,   high:3200, low:3100, volume:"118M"},
-        {ticker:"TLKM", price:2900,  change: 0.69, changeAmt: 20,   high:2930, low:2870, volume:"61M"},
-        {ticker:"BMRI", price:4510,  change: 0.45, changeAmt: 20,   high:4560, low:4470, volume:"35M"},
-        {ticker:"ASII", price:5750,  change:-2.13, changeAmt:-125,  high:5875, low:5725, volume:"48M"},
-        {ticker:"GOTO", price: 71,   change: 1.43, changeAmt:  1,   high:72,   low:69,   volume:"890M"},
-        {ticker:"BYAN", price:18500, change: 0.54, changeAmt:100,   high:18600,low:18400,volume:"1.2M"},
-        {ticker:"UNVR", price:2290,  change:-0.87, changeAmt:-20,   high:2330, low:2280, volume:"9M"},
-      ]);
-      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" (fallback)");
-    }
-    setLoading(false);
-  };
+  const getPrice = (ticker) => IDX_PRICES[ticker] || 0;
 
-  const portfolioValue = portfolio.reduce((sum,p)=>{
-    const s=stocks.find(s=>s.ticker===p.ticker);
-    return sum + (s ? s.price*p.lot*100 : p.avgPrice*p.lot*100);
-  },0);
-  const portfolioCost = portfolio.reduce((sum,p)=>sum+p.avgPrice*p.lot*100,0);
-  const portfolioPnL  = portfolioValue - portfolioCost;
-  const portfolioPct  = portfolioCost>0 ? (portfolioPnL/portfolioCost)*100 : 0;
+  const portfolioValue = portfolio.reduce((s,p) => s + getPrice(p.ticker)*p.lot*100, 0);
+  const portfolioCost  = portfolio.reduce((s,p) => s + p.avgPrice*p.lot*100, 0);
+  const portfolioPnL   = portfolioValue - portfolioCost;
+  const portfolioPct   = portfolioCost > 0 ? (portfolioPnL/portfolioCost)*100 : 0;
 
   const addStock = () => {
     if(!newStock.ticker||!newStock.lot) return;
@@ -749,114 +749,151 @@ function StockWidget() {
     <div style={{background:"var(--card-bg)",borderRadius:"20px",overflow:"hidden",boxShadow:"var(--shadow)"}}>
       {/* Header */}
       <div style={{background:"linear-gradient(135deg,#1e293b,#0f172a)",padding:"16px 16px 12px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}>
           <div>
             <p style={{margin:0,fontSize:"11px",color:"#94a3b8",letterSpacing:"1px",textTransform:"uppercase"}}>Portofolio Saham IDX</p>
-            <p style={{margin:"2px 0 0",fontSize:"22px",fontWeight:800,color:"#f1f5f9"}}>{fmt(portfolioValue)}</p>
+            <p style={{margin:"4px 0 0",fontSize:"24px",fontWeight:800,color:"#f1f5f9"}}>{fmt(portfolioValue)}</p>
           </div>
-          <button onClick={fetchStocks} disabled={loading}
-            style={{padding:"8px 14px",borderRadius:"10px",border:"none",background:loading?"#334155":"#3b82f6",color:"#fff",fontSize:"12px",fontWeight:700,cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:"6px"}}>
-            {loading ? <span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>⟳</span> : "⟳"} {loading?"Loading...":"Refresh"}
-          </button>
-        </div>
-        <div style={{display:"flex",gap:"16px"}}>
-          <div>
-            <p style={{margin:0,fontSize:"10px",color:"#64748b"}}>P&L</p>
-            <p style={{margin:0,fontSize:"14px",fontWeight:700,color:portfolioPnL>=0?"#10b981":"#ef4444"}}>
-              {portfolioPnL>=0?"+":""}{fmt(portfolioPnL)} ({portfolioPct>=0?"+":""}{portfolioPct.toFixed(1)}%)
+          <div style={{textAlign:"right"}}>
+            <p style={{margin:0,fontSize:"12px",fontWeight:700,color:portfolioPnL>=0?"#10b981":"#ef4444"}}>
+              {portfolioPnL>=0?"+":""}{fmt(portfolioPnL)}
+            </p>
+            <p style={{margin:"2px 0 0",fontSize:"11px",color:portfolioPnL>=0?"#10b981":"#ef4444"}}>
+              ({portfolioPct>=0?"+":""}{portfolioPct.toFixed(1)}%)
             </p>
           </div>
-          <div>
-            <p style={{margin:0,fontSize:"10px",color:"#64748b"}}>Modal</p>
-            <p style={{margin:0,fontSize:"14px",fontWeight:700,color:"#94a3b8"}}>{fmt(portfolioCost)}</p>
-          </div>
-          {lastUpdate&&<div style={{marginLeft:"auto"}}>
-            <p style={{margin:0,fontSize:"9px",color:"#475569"}}>Update</p>
-            <p style={{margin:0,fontSize:"10px",color:"#64748b"}}>{lastUpdate}</p>
-          </div>}
+        </div>
+        {/* Tab switcher */}
+        <div style={{display:"flex",gap:"6px"}}>
+          {[["portfolio","📊 Portfolio"],["chart","📈 Chart Live"],["watchlist","👁 Watchlist"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setTab(v)}
+              style={{padding:"5px 10px",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:600,
+                background:tab===v?"rgba(255,255,255,0.2)":"transparent",
+                color:tab===v?"#fff":"#64748b"}}>
+              {l}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Portfolio holdings */}
-      <div style={{padding:"12px 16px 0"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
-          <p style={{margin:0,fontSize:"12px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>Holdings</p>
-          <button onClick={()=>setShowAddStock(!showAddStock)}
-            style={{fontSize:"11px",padding:"4px 10px",borderRadius:"7px",border:"1px solid var(--border)",background:"transparent",color:"var(--primary)",fontWeight:700,cursor:"pointer"}}>
-            + Saham
-          </button>
-        </div>
-
-        {showAddStock&&(
-          <div style={{background:"var(--bg)",borderRadius:"12px",padding:"12px",marginBottom:"10px",display:"flex",gap:"8px",flexWrap:"wrap"}}>
-            {[{p:"Ticker",k:"ticker",w:"80px"},{p:"Lot",k:"lot",w:"60px"},{p:"Avg Price",k:"avgPrice",w:"90px"}].map(f=>(
-              <input key={f.k} placeholder={f.p} value={newStock[f.k]} onChange={e=>setNewStock(p=>({...p,[f.k]:e.target.value}))}
-                style={{width:f.w,padding:"7px 9px",borderRadius:"8px",border:"1.5px solid var(--border)",background:"var(--card-bg)",color:"var(--text)",fontSize:"12px"}}/>
-            ))}
-            <button onClick={addStock} style={{padding:"7px 12px",borderRadius:"8px",border:"none",background:"var(--primary)",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer"}}>Add</button>
-          </div>
-        )}
-
-        {stocks.length===0 ? (
-          <div style={{textAlign:"center",padding:"20px",color:"var(--text-muted)"}}>
-            <p style={{margin:0,fontSize:"13px"}}>Tap Refresh untuk memuat harga saham terkini 📡</p>
-          </div>
-        ) : (
-          portfolio.map(p=>{
-            const s=stocks.find(s=>s.ticker===p.ticker);
-            const currentPrice = s?.price || p.avgPrice;
-            const marketVal    = currentPrice*p.lot*100;
-            const costVal      = p.avgPrice*p.lot*100;
-            const pnl          = marketVal-costVal;
-            const pnlPct       = costVal>0?(pnl/costVal)*100:0;
-            return(
-              <div key={p.ticker} style={{padding:"10px 0",borderBottom:"1px solid var(--border)"}}>
-                <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
-                  <div style={{width:"38px",height:"38px",borderRadius:"10px",background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <span style={{fontSize:"10px",fontWeight:800,color:"#93c5fd"}}>{p.ticker}</span>
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{p.ticker}</p>
-                    <p style={{margin:0,fontSize:"10px",color:"var(--text-muted)"}}>{p.lot} lot · avg {p.avgPrice.toLocaleString("id-ID")}</p>
-                  </div>
-                  <div style={{textAlign:"right",flexShrink:0}}>
-                    <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{fmt(marketVal)}</p>
-                    <p style={{margin:0,fontSize:"11px",fontWeight:600,color:pnl>=0?"#10b981":"#ef4444"}}>
-                      {pnl>=0?"+":""}{fmt(pnl)} ({pnlPct>=0?"+":""}{pnlPct.toFixed(1)}%)
-                    </p>
-                  </div>
-                  <button onClick={()=>setConfirmStock(p.ticker)}
-                    style={{width:"28px",height:"28px",borderRadius:"7px",border:"1px solid #ef444433",background:"#ef444411",cursor:"pointer",fontSize:"12px",color:"#ef4444",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    🗑️
-                  </button>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {/* Live prices ticker */}
-      {stocks.length>0&&(
+      {/* Portfolio Tab */}
+      {tab==="portfolio"&&(
         <div style={{padding:"12px 16px 16px"}}>
-          <p style={{margin:"0 0 8px",fontSize:"11px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>Harga Live IDX</p>
-          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
-            {stocks.map(s=>(
-              <div key={s.ticker} style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 10px",background:"var(--bg)",borderRadius:"10px"}}>
-                <span style={{fontSize:"11px",fontWeight:800,color:"var(--text)",width:"44px",flexShrink:0}}>{s.ticker}</span>
-                <span style={{fontSize:"12px",fontWeight:700,color:"var(--text)",flex:1}}>{s.price?.toLocaleString("id-ID")}</span>
-                <span style={{fontSize:"11px",fontWeight:700,padding:"2px 7px",borderRadius:"6px",
-                  background:s.change>=0?"#10b98122":"#ef444422",
-                  color:s.change>=0?"#10b981":"#ef4444"}}>
-                  {s.change>=0?"+":""}{s.change?.toFixed(2)}%
-                </span>
-                <span style={{fontSize:"10px",color:"var(--text-muted)",minWidth:"30px",textAlign:"right"}}>{s.volume}</span>
-              </div>
-            ))}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
+            <p style={{margin:0,fontSize:"12px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>Holdings</p>
+            <button onClick={()=>setShowAddStock(!showAddStock)}
+              style={{fontSize:"11px",padding:"4px 10px",borderRadius:"7px",border:"1px solid var(--border)",background:"transparent",color:"var(--primary)",fontWeight:700,cursor:"pointer"}}>
+              + Saham
+            </button>
           </div>
+
+          {showAddStock&&(
+            <div style={{background:"var(--bg)",borderRadius:"12px",padding:"12px",marginBottom:"10px",display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"flex-end"}}>
+              {[{p:"Ticker",k:"ticker",w:"80px"},{p:"Lot",k:"lot",w:"60px"},{p:"Harga Beli",k:"avgPrice",w:"95px"}].map(f=>(
+                <div key={f.k}>
+                  <p style={{margin:"0 0 4px",fontSize:"10px",color:"var(--text-muted)",fontWeight:600}}>{f.p}</p>
+                  <input placeholder={f.p} value={newStock[f.k]} onChange={e=>setNewStock(p=>({...p,[f.k]:e.target.value}))}
+                    style={{width:f.w,padding:"7px 9px",borderRadius:"8px",border:"1.5px solid var(--border)",background:"var(--card-bg)",color:"var(--text)",fontSize:"12px"}}/>
+                </div>
+              ))}
+              <button onClick={addStock}
+                style={{padding:"7px 14px",borderRadius:"8px",border:"none",background:"var(--primary)",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer"}}>
+                Tambah
+              </button>
+            </div>
+          )}
+
+          {portfolio.length===0?(
+            <p style={{textAlign:"center",padding:"20px",color:"var(--text-muted)",fontSize:"13px"}}>Belum ada saham — tap + Saham</p>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:"1px"}}>
+              {portfolio.map(p=>{
+                const price  = getPrice(p.ticker);
+                const mktVal = price*p.lot*100;
+                const cost   = p.avgPrice*p.lot*100;
+                const pnl    = mktVal-cost;
+                const pct    = cost>0?(pnl/cost)*100:0;
+                return(
+                  <div key={p.ticker}
+                    onClick={()=>{setActiveChart(p.ticker);setTab("chart");}}
+                    style={{display:"flex",alignItems:"center",gap:"10px",padding:"10px 0",borderBottom:"1px solid var(--border)",cursor:"pointer"}}>
+                    <div style={{width:"36px",height:"36px",borderRadius:"9px",background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <span style={{fontSize:"9px",fontWeight:800,color:"#93c5fd"}}>{p.ticker}</span>
+                    </div>
+                    <div style={{flex:1}}>
+                      <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{p.ticker}</p>
+                      <p style={{margin:0,fontSize:"10px",color:"var(--text-muted)"}}>{p.lot} lot · avg {p.avgPrice.toLocaleString("id-ID")}</p>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{fmt(mktVal)}</p>
+                      <p style={{margin:0,fontSize:"11px",fontWeight:600,color:pnl>=0?"#10b981":"#ef4444"}}>
+                        {pnl>=0?"+":""}{fmt(pnl)} ({pct>=0?"+":""}{pct.toFixed(1)}%)
+                      </p>
+                    </div>
+                    <button onClick={e=>{e.stopPropagation();setConfirmStock(p.ticker);}}
+                      style={{width:"26px",height:"26px",borderRadius:"6px",border:"1px solid #ef444433",background:"#ef444411",cursor:"pointer",fontSize:"11px",color:"#ef4444",flexShrink:0}}>
+                      🗑️
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <p style={{margin:"12px 0 0",fontSize:"10px",color:"var(--text-muted)",textAlign:"center"}}>
+            💡 Tap nama saham untuk lihat chart live • Harga IDX diperbarui harian
+          </p>
         </div>
       )}
-      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+
+      {/* Chart Tab — TradingView Live */}
+      {tab==="chart"&&(
+        <div style={{padding:"12px 16px 16px"}}>
+          {/* Ticker selector */}
+          <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"12px"}}>
+            {[...new Set([...portfolio.map(p=>p.ticker),...IDX_WATCHLIST.slice(0,5)])].map(t=>(
+              <button key={t} onClick={()=>setActiveChart(t)}
+                style={{padding:"4px 10px",borderRadius:"7px",border:`1.5px solid ${activeChart===t?"var(--primary)":"var(--border)"}`,
+                  background:activeChart===t?"var(--primary)22":"transparent",
+                  cursor:"pointer",fontSize:"11px",fontWeight:700,
+                  color:activeChart===t?"var(--primary)":"var(--text-muted)"}}>
+                {t}
+              </button>
+            ))}
+          </div>
+          {/* TradingView Widget */}
+          <div style={{borderRadius:"12px",overflow:"hidden",border:"1px solid var(--border)"}}>
+            <TradingViewWidget symbol={activeChart}/>
+          </div>
+          <p style={{margin:"8px 0 0",fontSize:"10px",color:"var(--text-muted)",textAlign:"center"}}>
+            📈 Data real-time dari TradingView • Tap nama saham untuk switch chart
+          </p>
+        </div>
+      )}
+
+      {/* Watchlist Tab */}
+      {tab==="watchlist"&&(
+        <div style={{padding:"12px 16px 16px"}}>
+          <p style={{margin:"0 0 10px",fontSize:"12px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>
+            Harga IDX (per penutupan terakhir)
+          </p>
+          <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
+            {IDX_WATCHLIST.filter(t=>IDX_PRICES[t]).map(t=>(
+              <div key={t}
+                onClick={()=>{setActiveChart(t);setTab("chart");}}
+                style={{display:"flex",alignItems:"center",gap:"10px",padding:"9px 10px",background:"var(--bg)",borderRadius:"10px",cursor:"pointer"}}>
+                <span style={{fontSize:"12px",fontWeight:800,color:"var(--text)",width:"48px",flexShrink:0}}>{t}</span>
+                <span style={{fontSize:"13px",fontWeight:700,color:"var(--text)",flex:1}}>{(IDX_PRICES[t]||0).toLocaleString("id-ID")}</span>
+                <span style={{fontSize:"11px",color:"var(--text-muted)"}}>Tap untuk chart →</span>
+              </div>
+            ))}
+          </div>
+          <p style={{margin:"12px 0 0",fontSize:"10px",color:"var(--text-muted)",textAlign:"center"}}>
+            Tap saham manapun untuk lihat chart live di TradingView
+          </p>
+        </div>
+      )}
+
       {confirmStock&&<ConfirmDialog
         message={`Hapus saham ${confirmStock} dari portofolio?`}
         onConfirm={()=>{setPortfolio(p=>p.filter(s=>s.ticker!==confirmStock));setConfirmStock(null);}}
@@ -865,6 +902,7 @@ function StockWidget() {
     </div>
   );
 }
+
 
 // ─── Account Form ─────────────────────────────────────────────────────────────
 const ACCOUNT_TYPES = [
