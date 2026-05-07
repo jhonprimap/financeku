@@ -694,9 +694,13 @@ function TransactionsPage() {
 const IDX_WATCHLIST = ["BBCA","BBRI","TLKM","ASII","BMRI","GOTO","BYAN","UNVR","ICBP","PGAS"];
 
 const IDX_PRICES = {
+  // Blue chips
   BBCA:5950, BBRI:3160, TLKM:2900, BMRI:4510, ASII:5750,
   GOTO:71,   BYAN:18500,UNVR:2290, ICBP:8200, PGAS:1635,
   BBNI:2720, BRIS:1835, ADMR:3180, SMGR:4090, INDF:5775,
+  // Tambahan per 7 Mei 2026
+  APEX:610,  SMIL:168,  BUMI:232,  COIN:485,  CUAN:1285,
+  GTSI:200,  WNSA:298,  WBSA:420,
 };
 
 function TradingViewWidget({ symbol }) {
@@ -723,8 +727,10 @@ function StockWidget() {
   const [portfolio, setPortfolioState] = useState([]);
   const [portfolioLoaded, setPortfolioLoaded] = useState(false);
   const [showAddStock, setShowAddStock]   = useState(false);
-  const [newStock, setNewStock]           = useState({ticker:"",lot:"",avgPrice:""});
+  const [newStock, setNewStock]           = useState({ticker:"",lot:"",avgPrice:"",currentPrice:""});
   const [confirmStock, setConfirmStock]   = useState(null);
+  const [editPriceStock, setEditPriceStock] = useState(null);
+  const [editPriceVal, setEditPriceVal]   = useState("");
   const [activeChart, setActiveChart]     = useState("BBCA");
   const [tab, setTab]                     = useState("portfolio");
 
@@ -764,7 +770,21 @@ function StockWidget() {
     savePortfolio(newP);
   };
 
-  const getPrice = (ticker) => IDX_PRICES[ticker] || 0;
+  const updateStockPrice = () => {
+    if(!editPriceStock) return;
+    const newPrice = parseFloat(editPriceVal);
+    if(!newPrice || newPrice <= 0) { alert("Masukkan harga yang valid"); return; }
+    setPortfolio(p => p.map(s => s.ticker === editPriceStock ? {...s, currentPrice: newPrice} : s));
+    setEditPriceStock(null);
+    setEditPriceVal("");
+  };
+
+  const getPrice = (ticker) => {
+    // Cari currentPrice dari portfolio jika ada
+    const holding = portfolio.find(p => p.ticker === ticker);
+    if(holding && holding.currentPrice) return holding.currentPrice;
+    return IDX_PRICES[ticker] || 0;
+  };
 
   const portfolioValue = portfolio.reduce((s,p) => s + getPrice(p.ticker)*p.lot*100, 0);
   const portfolioCost  = portfolio.reduce((s,p) => s + p.avgPrice*p.lot*100, 0);
@@ -773,8 +793,15 @@ function StockWidget() {
 
   const addStock = () => {
     if(!newStock.ticker||!newStock.lot) return;
-    setPortfolio(p=>[...p,{ticker:newStock.ticker.toUpperCase(),lot:parseInt(newStock.lot)||0,avgPrice:parseFloat(newStock.avgPrice)||0}]);
-    setNewStock({ticker:"",lot:"",avgPrice:""});
+    const ticker = newStock.ticker.toUpperCase();
+    const currentPrice = parseFloat(newStock.currentPrice) || IDX_PRICES[ticker] || parseFloat(newStock.avgPrice) || 0;
+    setPortfolio(p=>[...p,{
+      ticker,
+      lot: parseInt(newStock.lot)||0,
+      avgPrice: parseFloat(newStock.avgPrice)||0,
+      currentPrice,
+    }]);
+    setNewStock({ticker:"",lot:"",avgPrice:"",currentPrice:""});
     setShowAddStock(false);
   };
 
@@ -820,18 +847,25 @@ function StockWidget() {
           </div>
 
           {showAddStock&&(
-            <div style={{background:"var(--bg)",borderRadius:"12px",padding:"12px",marginBottom:"10px",display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"flex-end"}}>
-              {[{p:"Ticker",k:"ticker",w:"80px"},{p:"Lot",k:"lot",w:"60px"},{p:"Harga Beli",k:"avgPrice",w:"95px"}].map(f=>(
-                <div key={f.k}>
-                  <p style={{margin:"0 0 4px",fontSize:"10px",color:"var(--text-muted)",fontWeight:600}}>{f.p}</p>
-                  <input placeholder={f.p} value={newStock[f.k]} onChange={e=>setNewStock(p=>({...p,[f.k]:e.target.value}))}
-                    style={{width:f.w,padding:"7px 9px",borderRadius:"8px",border:"1.5px solid var(--border)",background:"var(--card-bg)",color:"var(--text)",fontSize:"12px"}}/>
-                </div>
-              ))}
-              <button onClick={addStock}
-                style={{padding:"7px 14px",borderRadius:"8px",border:"none",background:"var(--primary)",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer"}}>
-                Tambah
-              </button>
+            <div style={{background:"var(--bg)",borderRadius:"12px",padding:"12px",marginBottom:"10px"}}>
+              <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"flex-end",marginBottom:"8px"}}>
+                {[{p:"Ticker",k:"ticker",w:"70px",ph:"BBCA"},{p:"Lot",k:"lot",w:"55px",ph:"10"},{p:"Harga Beli",k:"avgPrice",w:"90px",ph:"9200"},{p:"Harga Skrg",k:"currentPrice",w:"90px",ph:"Opsional"}].map(f=>(
+                  <div key={f.k}>
+                    <p style={{margin:"0 0 4px",fontSize:"10px",color:"var(--text-muted)",fontWeight:600}}>{f.p}</p>
+                    <input placeholder={f.ph} value={newStock[f.k]} onChange={e=>setNewStock(p=>({...p,[f.k]:e.target.value}))}
+                      style={{width:f.w,padding:"7px 9px",borderRadius:"8px",border:"1.5px solid var(--border)",background:"var(--card-bg)",color:"var(--text)",fontSize:"12px"}}/>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+                <p style={{margin:0,fontSize:"10px",color:"var(--text-muted)",flex:1}}>
+                  💡 Harga Skrg: isi manual dari aplikasi broker kamu untuk akurasi terbaik
+                </p>
+                <button onClick={addStock}
+                  style={{padding:"7px 14px",borderRadius:"8px",border:"none",background:"var(--primary)",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer"}}>
+                  Tambah
+                </button>
+              </div>
             </div>
           )}
 
@@ -856,11 +890,20 @@ function StockWidget() {
                       <p style={{margin:0,fontSize:"11px",fontWeight:600,color:pnl>=0?"#10b981":"#ef4444"}}>
                         {pnl>=0?"+":""}{fmt(pnl)} ({pct>=0?"+":""}{pct.toFixed(1)}%)
                       </p>
+                      <p style={{margin:"2px 0 0",fontSize:"9px",color:"var(--text-muted)"}}>
+                        Harga: {getPrice(p.ticker).toLocaleString("id-ID")}
+                      </p>
                     </div>
-                    <button onClick={e=>{e.stopPropagation();setConfirmStock(p.ticker);}}
-                      style={{width:"26px",height:"26px",borderRadius:"6px",border:"1px solid #ef444433",background:"#ef444411",cursor:"pointer",fontSize:"11px",color:"#ef4444",flexShrink:0}}>
-                      🗑️
-                    </button>
+                    <div style={{display:"flex",flexDirection:"column",gap:"4px",flexShrink:0}}>
+                      <button onClick={e=>{e.stopPropagation();setEditPriceStock(p.ticker);setEditPriceVal(String(getPrice(p.ticker)));}}
+                        style={{width:"26px",height:"26px",borderRadius:"6px",border:"1px solid var(--border)",background:"var(--bg)",cursor:"pointer",fontSize:"11px",color:"var(--primary)"}}>
+                        ✏️
+                      </button>
+                      <button onClick={e=>{e.stopPropagation();setConfirmStock(p.ticker);}}
+                        style={{width:"26px",height:"26px",borderRadius:"6px",border:"1px solid #ef444433",background:"#ef444411",cursor:"pointer",fontSize:"11px",color:"#ef4444"}}>
+                        🗑️
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -914,6 +957,40 @@ function StockWidget() {
         </div>
       )}
 
+      {editPriceStock&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:"24px",backdropFilter:"blur(4px)"}}>
+          <div style={{background:"var(--card-bg)",borderRadius:"20px",width:"100%",maxWidth:"320px",padding:"24px",boxShadow:"var(--shadow-xl)"}}>
+            <p style={{margin:"0 0 4px",fontSize:"16px",fontWeight:700,color:"var(--text)"}}>✏️ Update Harga</p>
+            <p style={{margin:"0 0 16px",fontSize:"13px",color:"var(--text-muted)"}}>Masukkan harga terkini <strong>{editPriceStock}</strong> dari broker kamu</p>
+            <input
+              type="number"
+              value={editPriceVal}
+              onChange={e=>setEditPriceVal(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&updateStockPrice()}
+              placeholder="Contoh: 9500"
+              autoFocus
+              style={{width:"100%",padding:"12px",borderRadius:"11px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"16px",boxSizing:"border-box",marginBottom:"16px",textAlign:"center",fontWeight:700}}
+            />
+            {editPriceVal&&parseFloat(editPriceVal)>0&&(
+              <div style={{padding:"8px 12px",borderRadius:"10px",background:"var(--primary)11",border:"1px solid var(--primary)33",marginBottom:"14px",textAlign:"center"}}>
+                <p style={{margin:0,fontSize:"12px",color:"var(--primary)",fontWeight:600}}>
+                  Harga saat ini: {parseFloat(editPriceVal).toLocaleString("id-ID")} IDR
+                </p>
+              </div>
+            )}
+            <div style={{display:"flex",gap:"10px"}}>
+              <button onClick={()=>{setEditPriceStock(null);setEditPriceVal("");}}
+                style={{flex:1,padding:"11px",borderRadius:"11px",border:"1.5px solid var(--border)",background:"transparent",color:"var(--text-muted)",fontSize:"13px",fontWeight:600,cursor:"pointer"}}>
+                Batal
+              </button>
+              <button onClick={updateStockPrice}
+                style={{flex:2,padding:"11px",borderRadius:"11px",border:"none",background:"var(--primary)",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"}}>
+                Simpan Harga
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmStock&&<ConfirmDialog
         message={`Hapus saham ${confirmStock} dari portofolio?`}
         onConfirm={()=>{setPortfolio(p=>p.filter(s=>s.ticker!==confirmStock));setConfirmStock(null);}}
