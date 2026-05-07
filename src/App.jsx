@@ -2,7 +2,7 @@ import { useState, useContext, createContext, useMemo, useEffect, useCallback } 
 import { auth, db } from "./firebase";
 import { useAuth } from "./hooks/useAuth";
 import { useFirestoreData, useUserSettings, seedUserData } from "./hooks/useFirestore";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, updateDoc, serverTimestamp, onSnapshot, setDoc } from "firebase/firestore";
 
 const AppContext = createContext();
 
@@ -730,36 +730,28 @@ function StockWidget() {
   // Load portfolio dari Firestore
   useEffect(() => {
     if (!user?.uid) return;
-    const { doc: firestoreDoc, onSnapshot: firestoreOnSnapshot } = require("firebase/firestore");
-    // Use dynamic import approach
-    import("firebase/firestore").then(({ doc: fsDoc, onSnapshot }) => {
-      const { db } = require("../firebase");
-      const ref = fsDoc(db, "users", user.uid, "settings", "stockPortfolio");
-      const unsub = onSnapshot(ref, (snap) => {
-        if (snap.exists() && snap.data().portfolio) {
-          setPortfolioState(snap.data().portfolio);
-        } else if (!portfolioLoaded) {
-          // Default portfolio untuk user baru
-          setPortfolioState([
-            {ticker:"BBCA", lot:10, avgPrice:7500},
-            {ticker:"TLKM", lot:20, avgPrice:3200},
-            {ticker:"BMRI", lot:15, avgPrice:5000},
-          ]);
-        }
-        setPortfolioLoaded(true);
-      });
-      return unsub;
-    }).catch(() => setPortfolioLoaded(true));
+    const ref = doc(db, "users", user.uid, "settings", "stockPortfolio");
+    const unsub = onSnapshot(ref, (snap) => {
+      if (snap.exists() && snap.data().portfolio) {
+        setPortfolioState(snap.data().portfolio);
+      } else {
+        setPortfolioState([
+          {ticker:"BBCA", lot:10, avgPrice:7500},
+          {ticker:"TLKM", lot:20, avgPrice:3200},
+          {ticker:"BMRI", lot:15, avgPrice:5000},
+        ]);
+      }
+      setPortfolioLoaded(true);
+    });
+    return () => unsub();
   }, [user?.uid]);
 
   // Save portfolio ke Firestore
   const savePortfolio = async (newPortfolio) => {
     if (!user?.uid) return;
     try {
-      const { doc: fsDoc, setDoc } = await import("firebase/firestore");
-      const { db } = await import("../firebase");
       await setDoc(
-        fsDoc(db, "users", user.uid, "settings", "stockPortfolio"),
+        doc(db, "users", user.uid, "settings", "stockPortfolio"),
         { portfolio: newPortfolio, updatedAt: new Date().toISOString() }
       );
     } catch(e) { console.error("Save portfolio error:", e); }
