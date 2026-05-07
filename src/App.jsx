@@ -1002,17 +1002,31 @@ function StockWidget() {
 
 // ─── Account Form ─────────────────────────────────────────────────────────────
 const ACCOUNT_TYPES = [
-  {value:"bank",         label:"🏦 Rekening Bank",     color:"#3b82f6"},
-  {value:"ewallet",      label:"💜 E-Wallet",           color:"#8b5cf6"},
-  {value:"credit_card",  label:"💳 Kartu Kredit",      color:"#f59e0b"},
-  {value:"investment",   label:"📈 Investasi/Saham",    color:"#10b981"},
-  {value:"gold_digital", label:"🥇 Emas Digital",       color:"#f59e0b"},
-  {value:"gold_physical",label:"🏅 Emas Batangan",      color:"#d97706"},
-  {value:"loan",         label:"🏧 Pinjaman/Utang",     color:"#ef4444"},
-  {value:"property",     label:"🏠 Properti",           color:"#06b6d4"},
-  {value:"vehicle",      label:"🚗 Kendaraan",          color:"#f97316"},
-  {value:"cash",         label:"💵 Kas/Tunai",          color:"#84cc16"},
-  {value:"custom",       label:"✨ Kustom (Buat Sendiri)", color:"#6366f1"},
+  // Kas & Likuid
+  {value:"bank",          label:"🏦 Rekening Bank",        color:"#3b82f6", group:"kas"},
+  {value:"ewallet",       label:"💜 E-Wallet",              color:"#8b5cf6", group:"kas"},
+  {value:"cash",          label:"💵 Kas/Tunai",             color:"#84cc16", group:"kas"},
+  {value:"money_market",  label:"💹 Reksa Dana Pasar Uang", color:"#06b6d4", group:"kas"},
+  // Investasi
+  {value:"investment",    label:"📈 Saham IDX",             color:"#10b981", group:"inv"},
+  {value:"stock_us",      label:"🇺🇸 Saham AS (US Stock)",  color:"#3b82f6", group:"inv"},
+  {value:"rd_saham",      label:"📊 Reksa Dana Saham",      color:"#8b5cf6", group:"inv"},
+  {value:"rd_obligasi",   label:"📋 Reksa Dana Obligasi",   color:"#06b6d4", group:"inv"},
+  {value:"sbn",           label:"🏛️ SBN / ORI / Sukuk",    color:"#10b981", group:"inv"},
+  {value:"obligasi_fr",   label:"📜 Obligasi FR",           color:"#14b8a6", group:"inv"},
+  {value:"crypto",        label:"₿ Crypto",                 color:"#f59e0b", group:"inv"},
+  {value:"gold_digital",  label:"🥇 Emas Digital",          color:"#eab308", group:"inv"},
+  {value:"nft",           label:"🖼️ NFT / Aset Digital",    color:"#ec4899", group:"inv"},
+  {value:"p2p",           label:"🤝 P2P Lending",           color:"#f97316", group:"inv"},
+  // Aset Fisik
+  {value:"gold_physical", label:"🏅 Emas Batangan",         color:"#d97706", group:"aset"},
+  {value:"property",      label:"🏠 Properti",              color:"#06b6d4", group:"aset"},
+  {value:"vehicle",       label:"🚗 Kendaraan",             color:"#f97316", group:"aset"},
+  // Liabilitas
+  {value:"credit_card",   label:"💳 Kartu Kredit",          color:"#ef4444", group:"liab"},
+  {value:"loan",          label:"🏧 Pinjaman/Utang",        color:"#ef4444", group:"liab"},
+  // Kustom
+  {value:"custom",        label:"✨ Kustom (Buat Sendiri)", color:"#6366f1", group:"custom"},
 ];
 const ACC_COLORS=["#3b82f6","#10b981","#8b5cf6","#f59e0b","#ec4899","#14b8a6","#f97316","#ef4444","#06b6d4","#84cc16"];
 
@@ -1040,17 +1054,31 @@ function AccountForm({onSave, initial}) {
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:"14px"}}>
-      {/* Type selector */}
+      {/* Type selector - grouped */}
       <div>
         <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"8px"}}>Jenis Akun</label>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"7px"}}>
-          {ACCOUNT_TYPES.map(t=>(
-            <button key={t.value} onClick={()=>{set("type",t.value);set("color",t.color);}}
-              style={{padding:"8px 10px",borderRadius:"10px",border:`1.5px solid ${form.type===t.value?t.color:"var(--border)"}`,background:form.type===t.value?`${t.color}22`:"transparent",cursor:"pointer",fontSize:"12px",fontWeight:600,color:form.type===t.value?t.color:"var(--text-muted)",textAlign:"left"}}>
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {[
+          {group:"kas",   title:"💰 Kas & Likuid"},
+          {group:"inv",   title:"📈 Investasi"},
+          {group:"aset",  title:"🏠 Aset Fisik"},
+          {group:"liab",  title:"⚠️ Liabilitas"},
+          {group:"custom",title:"✨ Lainnya"},
+        ].map(g=>(
+          <div key={g.group} style={{marginBottom:"10px"}}>
+            <p style={{margin:"0 0 6px",fontSize:"10px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>{g.title}</p>
+            <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
+              {ACCOUNT_TYPES.filter(t=>t.group===g.group).map(t=>(
+                <button key={t.value} onClick={()=>{set("type",t.value);set("color",t.color);}}
+                  style={{padding:"6px 10px",borderRadius:"9px",border:`1.5px solid ${form.type===t.value?t.color:"var(--border)"}`,
+                    background:form.type===t.value?`${t.color}22`:"transparent",
+                    cursor:"pointer",fontSize:"11px",fontWeight:600,
+                    color:form.type===t.value?t.color:"var(--text-muted)"}}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Color */}
@@ -1143,11 +1171,11 @@ function AccountsPage() {
   const [modal,setModal]     = useState(null); // null|"add"|"edit"
   const [selected,setSelected] = useState(null);
 
-  const banks  = accounts.filter(a=>a.type==="bank"||a.type==="cash"||a.type==="ewallet");
-  const ccs    = accounts.filter(a=>a.type==="credit_card");
-  const loans  = accounts.filter(a=>a.type==="loan");
-  const invs   = accounts.filter(a=>["investment","gold_digital","gold_physical"].includes(a.type));
-  const assets  = accounts.filter(a=>["property","vehicle"].includes(a.type));
+  const banks   = accounts.filter(a=>["bank","cash","ewallet","money_market"].includes(a.type));
+  const ccs     = accounts.filter(a=>a.type==="credit_card");
+  const loans   = accounts.filter(a=>a.type==="loan");
+  const invs    = accounts.filter(a=>["investment","stock_us","rd_saham","rd_obligasi","sbn","obligasi_fr","crypto","gold_digital","nft","p2p"].includes(a.type));
+  const assets  = accounts.filter(a=>["gold_physical","property","vehicle"].includes(a.type));
   const customs = accounts.filter(a=>a.type==="custom");
 
   const { stockPortfolioValue=0 } = useContext(AppContext);
@@ -1253,7 +1281,7 @@ function AccountsPage() {
       {/* Aset Fisik */}
       {assets.length>0&&(
         <div style={{marginBottom:"20px"}}>
-          <SectionHeader title="🏠 Aset Fisik" onAdd={()=>{setSelected(null);setModal("add");}}/>
+          <SectionHeader title="🏠 Aset Fisik & Emas Batangan" onAdd={()=>{setSelected(null);setModal("add");}}/>
           <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
             {assets.map(a=>(
               <div key={a.id} style={{background:"var(--card-bg)",borderRadius:"14px",padding:"14px",boxShadow:"var(--shadow)",borderLeft:`4px solid ${a.color}`}}>
