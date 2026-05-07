@@ -438,7 +438,8 @@ function LoginPage({onLogin}) {
 function Dashboard() {
   const {transactions,accounts,categories,goals,primaryColor}=useContext(AppContext);
 
-  const totalAssets      =accounts.filter(a=>a.balance>0).reduce((s,a)=>s+a.balance,0);
+  const { stockPortfolioValue=0 } = useContext(AppContext);
+  const totalAssets      =accounts.filter(a=>a.balance>0).reduce((s,a)=>s+a.balance,0) + stockPortfolioValue;
   const totalLiabilities =Math.abs(accounts.filter(a=>a.balance<0).reduce((s,a)=>s+a.balance,0));
   const netWorth         =totalAssets-totalLiabilities;
   const thisMonth        =transactions.filter(t=>t.date.startsWith("2025-06"));
@@ -1029,7 +1030,7 @@ function AccountForm({onSave, initial}) {
 
 // ─── Accounts ─────────────────────────────────────────────────────────────────
 function AccountsPage() {
-  const {accounts,setAccounts}=useContext(AppContext);
+  const {accounts,setAccounts,accCol}=useContext(AppContext);
   const [modal,setModal]     = useState(null); // null|"add"|"edit"
   const [selected,setSelected] = useState(null);
 
@@ -1039,7 +1040,8 @@ function AccountsPage() {
   const invs   = accounts.filter(a=>a.type==="investment");
   const assets = accounts.filter(a=>["property","vehicle"].includes(a.type));
 
-  const totalAset = accounts.filter(a=>a.balance>0).reduce((s,a)=>s+a.balance,0);
+  const { stockPortfolioValue=0 } = useContext(AppContext);
+  const totalAset = accounts.filter(a=>a.balance>0).reduce((s,a)=>s+a.balance,0) + stockPortfolioValue;
   const totalUtang= Math.abs(accounts.filter(a=>a.balance<0).reduce((s,a)=>s+a.balance,0));
 
   const saveAccount = form => {
@@ -1053,14 +1055,17 @@ function AccountsPage() {
       billing_date: parseInt(form.billing_date)||undefined,
       due_date: parseInt(form.due_date)||undefined,
     };
-    if(selected) setAccounts(p=>p.map(a=>a.id===acc.id?acc:a));
-    else setAccounts(p=>[...p,acc]);
+    if(selected) {
+      accCol.update(acc.id, acc);
+    } else {
+      accCol.add(acc);
+    }
     setModal(null); setSelected(null);
   };
 
   const [confirmAccId,setConfirmAccId]=useState(null);
   const delAccount = id => setConfirmAccId(id);
-  const doDeleteAcc = () => {setAccounts(p=>p.filter(a=>a.id!==confirmAccId));setConfirmAccId(null);};
+  const doDeleteAcc = () => {accCol.remove(confirmAccId);setConfirmAccId(null);};
 
   const ActionBtns = ({a}) => (
     <div style={{display:"flex",gap:"4px",marginTop:"8px",justifyContent:"flex-end"}}>
@@ -1326,7 +1331,7 @@ function TopUpForm({goal, onSave}) {
 }
 
 function GoalsPage() {
-  const {goals,setGoals}=useContext(AppContext);
+  const {goals,setGoals,goalCol}=useContext(AppContext);
   const [modal,setModal] = useState(null); // null | "add" | "edit" | "topup"
   const [selected,setSelected] = useState(null);
 
@@ -1340,31 +1345,31 @@ function GoalsPage() {
       icon: form.icon||"🎯",
       color: form.color||"#3b82f6",
     };
-    setGoals(p=>[...p,g]);
+    goalCol.add(g);
     setModal(null);
   };
 
   const editGoal = form => {
-    setGoals(p=>p.map(g=>g.id===selected.id ? {
-      ...g,
-      name: form.name||g.name,
-      target: parseFloat(form.target)||g.target,
-      current: parseFloat(form.current)||g.current,
-      deadline: form.deadline||g.deadline,
-      icon: form.icon||g.icon,
-      color: form.color||g.color,
-    } : g));
+    goalCol.update(selected.id, {
+      ...selected,
+      name: form.name||selected.name,
+      target: parseFloat(form.target)||selected.target,
+      current: parseFloat(form.current)||selected.current,
+      deadline: form.deadline||selected.deadline,
+      icon: form.icon||selected.icon,
+      color: form.color||selected.color,
+    });
     setModal(null); setSelected(null);
   };
 
   const topUpGoal = (amount) => {
-    setGoals(p=>p.map(g=>g.id===selected.id ? {...g, current:Math.min(g.target, g.current+amount)} : g));
+    goalCol.update(selected.id, {...selected, current:Math.min(selected.target, selected.current+amount)});
     setModal(null); setSelected(null);
   };
 
   const [confirmGoalId,setConfirmGoalId]=useState(null);
   const delGoal = id => setConfirmGoalId(id);
-  const doDeleteGoal = () => {setGoals(p=>p.filter(g=>g.id!==confirmGoalId));setConfirmGoalId(null);};
+  const doDeleteGoal = () => {goalCol.remove(confirmGoalId);setConfirmGoalId(null);};
 
   return(
     <div style={{padding:"16px 16px 80px"}}>
@@ -1659,7 +1664,7 @@ function RecurringForm({onSave, initial}) {
 }
 
 function RecurringPage() {
-  const {recurrings, setRecurrings, setTransactions, categories} = useContext(AppContext);
+  const {recurrings, setRecurrings, setTransactions, categories, recCol, txCol} = useContext(AppContext);
   const [modal, setModal]       = useState(null);
   const [selected, setSelected] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
@@ -1692,8 +1697,8 @@ function RecurringPage() {
       note: rec.name,
       tags: Array.isArray(rec.tags) ? rec.tags : (rec.tags||"").split(",").map(t=>t.trim()).filter(Boolean),
     };
-    setTransactions(p=>[tx,...p]);
-    setRecurrings(p=>p.map(r=>r.id===rec.id?{...r,lastRun:tx.date}:r));
+    txCol.add(tx);
+    recCol.update(rec.id, {...rec, lastRun:tx.date});
     alert(`✅ Transaksi "${rec.name}" berhasil dicatat!`);
   };
 
@@ -1847,7 +1852,7 @@ function FAB({onClick}) {
 }
 
 function BottomNav({tab,setTab}) {
-  const tabs=[{id:"dashboard",icon:"📊",label:"Beranda"},{id:"transactions",icon:"💸",label:"Transaksi"},{id:"accounts",icon:"🏦",label:"Akun"},{id:"recurring",icon:"🔄",label:"Rutin"},{id:"settings",icon:"⚙️",label:"Setelan"}];
+  const tabs=[{id:"dashboard",icon:"📊",label:"Beranda"},{id:"transactions",icon:"💸",label:"Transaksi"},{id:"accounts",icon:"🏦",label:"Akun"},{id:"goals",icon:"🎯",label:"Target"},{id:"settings",icon:"⚙️",label:"Setelan"}];
   return(
     <div style={{position:"fixed",bottom:0,left:0,right:0,background:"var(--card-bg)",borderTop:"1px solid var(--border)",display:"flex",zIndex:200,paddingBottom:"env(safe-area-inset-bottom)"}}>
       {tabs.map(t=>(
@@ -1934,16 +1939,19 @@ export default function App() {
     const next = typeof fn === "function" ? fn(prev) : fn;
     const removed = prev.filter(p => !next.find(n => n.id === p.id));
     const added   = next.filter(n => !prev.find(p => p.id === n.id));
+    // For updates: compare only user-editable fields (ignore Firestore timestamps)
     const updated = next.filter(n => {
       const old = prev.find(p => p.id === n.id);
-      return old && JSON.stringify(old) !== JSON.stringify(n);
+      if (!old) return false;
+      const { createdAt: _c1, updatedAt: _u1, ...oldClean } = old;
+      const { createdAt: _c2, updatedAt: _u2, ...newClean } = n;
+      return JSON.stringify(oldClean) !== JSON.stringify(newClean);
     });
     removed.forEach(r => col.remove(r.id));
-    added.forEach(a   => col.add(a));
+    added.forEach(a => col.add(a));
     updated.forEach(u => col.update(u.id, u));
   }
 
-  // Provide simple array setters compatible with existing child components
   const makeSetterFn = (col) => (fn) => diff(col, fn);
 
   const theme = {
@@ -1997,11 +2005,12 @@ export default function App() {
     <AppContext.Provider value={{
       transactions: txCol.data, setTransactions: makeSetterFn(txCol),
       categories:   catCol.data,
-      accounts:     accCol.data,  setAccounts:    makeSetterFn(accCol),
-      goals:        goalCol.data, setGoals:       makeSetterFn(goalCol),
-      recurrings:   recCol.data,  setRecurrings:  makeSetterFn(recCol),
+      accounts:     accCol.data,  setAccounts:    makeSetterFn(accCol), accCol,
+      goals:        goalCol.data, setGoals:       makeSetterFn(goalCol), goalCol,
+      recurrings:   recCol.data,  setRecurrings:  makeSetterFn(recCol), recCol, txCol,
       darkMode, setDarkMode, primaryColor, setPrimaryColor,
       user, logout,
+      stockPortfolioValue,
     }}>
       <div style={{ ...theme, minHeight: "100vh", background: "var(--bg)", color: "var(--text)", maxWidth: "430px", margin: "0 auto", position: "relative" }}>
         <style>{`
