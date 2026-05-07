@@ -7,6 +7,7 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
+  sendPasswordResetEmail,
 } from "firebase/auth";
 import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../firebase";
@@ -64,7 +65,19 @@ export function useAuth() {
 
   const logout = () => signOut(auth);
 
-  return { user, loading, error, setError, register, login, logout };
+  const resetPassword = async (email) => {
+    setError("");
+    try {
+      await sendPasswordResetEmail(auth, email);
+      return { ok: true };
+    } catch (e) {
+      const msg = firebaseErrorMsg(e.code);
+      setError(msg);
+      return { ok: false, error: msg };
+    }
+  };
+
+  return { user, loading, error, setError, register, login, logout, resetPassword };
 }
 
 function firebaseErrorMsg(code) {

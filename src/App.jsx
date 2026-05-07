@@ -1,4 +1,8 @@
-import React, { useState, useContext, createContext, useMemo, useRef, useEffect } from "react";
+import { useState, useContext, createContext, useMemo, useEffect, useCallback } from "react";
+import { auth, db } from "./firebase";
+import { useAuth } from "./hooks/useAuth";
+import { useFirestoreData, useUserSettings, seedUserData } from "./hooks/useFirestore";
+import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 
 const AppContext = createContext();
 
@@ -685,58 +689,72 @@ function TransactionsPage() {
   );
 }
 
-// ─── IDX Stock Widget (TradingView embed + Portfolio tracker) ────────────────
+// ─── IDX Stock Widget (AI-powered real-time) ──────────────────────────────────
 const IDX_WATCHLIST = ["BBCA","BBRI","TLKM","ASII","BMRI","GOTO","BYAN","UNVR","ICBP","PGAS"];
 
-// Current IDX prices (updated per market close — auto-refresh via TradingView)
-const IDX_PRICES = {
-  BBCA:5950, BBRI:3160, TLKM:2900, BMRI:4510, ASII:5750,
-  GOTO:71,   BYAN:18500,UNVR:2290, ICBP:8200, PGAS:1635,
-  BBNI:2720, BRIS:1835, ADMR:3180, SMGR:4090, INDF:5775,
-};
-
-function TradingViewWidget({ symbol }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    ref.current.innerHTML = "";
-    const script = document.createElement("script");
-    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
-    script.async = true;
-    script.innerHTML = JSON.stringify({
-      symbol: `IDX:${symbol}`,
-      width: "100%",
-      height: 220,
-      locale: "id",
-      dateRange: "1D",
-      colorTheme: "light",
-      isTransparent: true,
-      autosize: true,
-      largeChartUrl: `https://www.tradingview.com/chart/?symbol=IDX:${symbol}`,
-    });
-    ref.current.appendChild(script);
-  }, [symbol]);
-  return <div ref={ref} className="tradingview-widget-container" style={{width:"100%",height:"220px"}}/>;
-}
-
 function StockWidget() {
+  const [stocks, setStocks]   = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
   const [portfolio, setPortfolio] = useState([
-    {ticker:"BBCA", lot:10, avgPrice:7500},
-    {ticker:"TLKM", lot:20, avgPrice:3200},
-    {ticker:"BMRI", lot:15, avgPrice:5000},
+    {ticker:"BBCA", lot:10, avgPrice:9200},
+    {ticker:"TLKM", lot:20, avgPrice:3800},
+    {ticker:"BMRI", lot:15, avgPrice:6500},
   ]);
-  const [showAddStock, setShowAddStock]   = useState(false);
-  const [newStock, setNewStock]           = useState({ticker:"",lot:"",avgPrice:""});
-  const [confirmStock, setConfirmStock]   = useState(null);
-  const [activeChart, setActiveChart]     = useState("BBCA");
-  const [tab, setTab]                     = useState("portfolio"); // "portfolio" | "chart" | "watchlist"
+  const [showAddStock, setShowAddStock] = useState(false);
+  const [newStock, setNewStock] = useState({ticker:"",lot:"",avgPrice:""});
+  const [confirmStock, setConfirmStock] = useState(null);;
 
-  const getPrice = (ticker) => IDX_PRICES[ticker] || 0;
+  const fetchStocks = async () => {
+    setLoading(true);
+    try {
+      const tickers = [...new Set([...portfolio.map(p=>p.ticker), ...IDX_WATCHLIST.slice(0,5)])];
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:1000,
+          tools:[{type:"web_search_20250305",name:"web_search"}],
+          messages:[{
+            role:"user",
+            content:`Cari harga saham IDX (Bursa Efek Indonesia) terkini untuk ticker berikut: ${tickers.join(", ")}. 
+Gunakan web search untuk mendapatkan harga terbaru dari sumber seperti Yahoo Finance, investing.com, atau RTI Business.
+Kembalikan HANYA JSON array tanpa teks lain, format:
+[{"ticker":"BBCA","price":9500,"change":1.2,"changeAmt":110,"high":9550,"low":9400,"volume":"45.2M"}]
+Semua harga dalam Rupiah (IDR). change dalam persen, changeAmt dalam Rupiah.`
+          }]
+        })
+      });
+      const data = await resp.json();
+      const text = data.content.filter(b=>b.type==="text").map(b=>b.text).join("");
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if(jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        setStocks(parsed);
+        setLastUpdate(new Date().toLocaleTimeString("id-ID"));
+      }
+    } catch(e) {
+      // fallback demo data
+      setStocks([
+        {ticker:"BBCA", price:9500, change:1.2,  changeAmt:110,  high:9550, low:9400, volume:"45.2M"},
+        {ticker:"BBRI", price:5425, change:-0.46, changeAmt:-25,  high:5500, low:5400, volume:"123M"},
+        {ticker:"TLKM", price:3800, change:0.53,  changeAmt:20,   high:3850, low:3760, volume:"67M"},
+        {ticker:"BMRI", price:6875, change:0.73,  changeAmt:50,   high:6900, low:6800, volume:"38M"},
+        {ticker:"ASII", price:5000, change:-0.99, changeAmt:-50,  high:5075, low:4975, volume:"52M"},
+      ]);
+      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" (demo)");
+    }
+    setLoading(false);
+  };
 
-  const portfolioValue = portfolio.reduce((s,p) => s + getPrice(p.ticker)*p.lot*100, 0);
-  const portfolioCost  = portfolio.reduce((s,p) => s + p.avgPrice*p.lot*100, 0);
-  const portfolioPnL   = portfolioValue - portfolioCost;
-  const portfolioPct   = portfolioCost > 0 ? (portfolioPnL/portfolioCost)*100 : 0;
+  const portfolioValue = portfolio.reduce((sum,p)=>{
+    const s=stocks.find(s=>s.ticker===p.ticker);
+    return sum + (s ? s.price*p.lot*100 : p.avgPrice*p.lot*100);
+  },0);
+  const portfolioCost = portfolio.reduce((sum,p)=>sum+p.avgPrice*p.lot*100,0);
+  const portfolioPnL  = portfolioValue - portfolioCost;
+  const portfolioPct  = portfolioCost>0 ? (portfolioPnL/portfolioCost)*100 : 0;
 
   const addStock = () => {
     if(!newStock.ticker||!newStock.lot) return;
@@ -749,151 +767,114 @@ function StockWidget() {
     <div style={{background:"var(--card-bg)",borderRadius:"20px",overflow:"hidden",boxShadow:"var(--shadow)"}}>
       {/* Header */}
       <div style={{background:"linear-gradient(135deg,#1e293b,#0f172a)",padding:"16px 16px 12px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
           <div>
             <p style={{margin:0,fontSize:"11px",color:"#94a3b8",letterSpacing:"1px",textTransform:"uppercase"}}>Portofolio Saham IDX</p>
-            <p style={{margin:"4px 0 0",fontSize:"24px",fontWeight:800,color:"#f1f5f9"}}>{fmt(portfolioValue)}</p>
+            <p style={{margin:"2px 0 0",fontSize:"22px",fontWeight:800,color:"#f1f5f9"}}>{fmt(portfolioValue)}</p>
           </div>
-          <div style={{textAlign:"right"}}>
-            <p style={{margin:0,fontSize:"12px",fontWeight:700,color:portfolioPnL>=0?"#10b981":"#ef4444"}}>
-              {portfolioPnL>=0?"+":""}{fmt(portfolioPnL)}
-            </p>
-            <p style={{margin:"2px 0 0",fontSize:"11px",color:portfolioPnL>=0?"#10b981":"#ef4444"}}>
-              ({portfolioPct>=0?"+":""}{portfolioPct.toFixed(1)}%)
-            </p>
-          </div>
+          <button onClick={fetchStocks} disabled={loading}
+            style={{padding:"8px 14px",borderRadius:"10px",border:"none",background:loading?"#334155":"#3b82f6",color:"#fff",fontSize:"12px",fontWeight:700,cursor:loading?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:"6px"}}>
+            {loading ? <span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>⟳</span> : "⟳"} {loading?"Loading...":"Refresh"}
+          </button>
         </div>
-        {/* Tab switcher */}
-        <div style={{display:"flex",gap:"6px"}}>
-          {[["portfolio","📊 Portfolio"],["chart","📈 Chart Live"],["watchlist","👁 Watchlist"]].map(([v,l])=>(
-            <button key={v} onClick={()=>setTab(v)}
-              style={{padding:"5px 10px",borderRadius:"8px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:600,
-                background:tab===v?"rgba(255,255,255,0.2)":"transparent",
-                color:tab===v?"#fff":"#64748b"}}>
-              {l}
-            </button>
-          ))}
+        <div style={{display:"flex",gap:"16px"}}>
+          <div>
+            <p style={{margin:0,fontSize:"10px",color:"#64748b"}}>P&L</p>
+            <p style={{margin:0,fontSize:"14px",fontWeight:700,color:portfolioPnL>=0?"#10b981":"#ef4444"}}>
+              {portfolioPnL>=0?"+":""}{fmt(portfolioPnL)} ({portfolioPct>=0?"+":""}{portfolioPct.toFixed(1)}%)
+            </p>
+          </div>
+          <div>
+            <p style={{margin:0,fontSize:"10px",color:"#64748b"}}>Modal</p>
+            <p style={{margin:0,fontSize:"14px",fontWeight:700,color:"#94a3b8"}}>{fmt(portfolioCost)}</p>
+          </div>
+          {lastUpdate&&<div style={{marginLeft:"auto"}}>
+            <p style={{margin:0,fontSize:"9px",color:"#475569"}}>Update</p>
+            <p style={{margin:0,fontSize:"10px",color:"#64748b"}}>{lastUpdate}</p>
+          </div>}
         </div>
       </div>
 
-      {/* Portfolio Tab */}
-      {tab==="portfolio"&&(
-        <div style={{padding:"12px 16px 16px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
-            <p style={{margin:0,fontSize:"12px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>Holdings</p>
-            <button onClick={()=>setShowAddStock(!showAddStock)}
-              style={{fontSize:"11px",padding:"4px 10px",borderRadius:"7px",border:"1px solid var(--border)",background:"transparent",color:"var(--primary)",fontWeight:700,cursor:"pointer"}}>
-              + Saham
-            </button>
-          </div>
-
-          {showAddStock&&(
-            <div style={{background:"var(--bg)",borderRadius:"12px",padding:"12px",marginBottom:"10px",display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"flex-end"}}>
-              {[{p:"Ticker",k:"ticker",w:"80px"},{p:"Lot",k:"lot",w:"60px"},{p:"Harga Beli",k:"avgPrice",w:"95px"}].map(f=>(
-                <div key={f.k}>
-                  <p style={{margin:"0 0 4px",fontSize:"10px",color:"var(--text-muted)",fontWeight:600}}>{f.p}</p>
-                  <input placeholder={f.p} value={newStock[f.k]} onChange={e=>setNewStock(p=>({...p,[f.k]:e.target.value}))}
-                    style={{width:f.w,padding:"7px 9px",borderRadius:"8px",border:"1.5px solid var(--border)",background:"var(--card-bg)",color:"var(--text)",fontSize:"12px"}}/>
-                </div>
-              ))}
-              <button onClick={addStock}
-                style={{padding:"7px 14px",borderRadius:"8px",border:"none",background:"var(--primary)",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer"}}>
-                Tambah
-              </button>
-            </div>
-          )}
-
-          {portfolio.length===0?(
-            <p style={{textAlign:"center",padding:"20px",color:"var(--text-muted)",fontSize:"13px"}}>Belum ada saham — tap + Saham</p>
-          ):(
-            <div style={{display:"flex",flexDirection:"column",gap:"1px"}}>
-              {portfolio.map(p=>{
-                const price  = getPrice(p.ticker);
-                const mktVal = price*p.lot*100;
-                const cost   = p.avgPrice*p.lot*100;
-                const pnl    = mktVal-cost;
-                const pct    = cost>0?(pnl/cost)*100:0;
-                return(
-                  <div key={p.ticker}
-                    onClick={()=>{setActiveChart(p.ticker);setTab("chart");}}
-                    style={{display:"flex",alignItems:"center",gap:"10px",padding:"10px 0",borderBottom:"1px solid var(--border)",cursor:"pointer"}}>
-                    <div style={{width:"36px",height:"36px",borderRadius:"9px",background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                      <span style={{fontSize:"9px",fontWeight:800,color:"#93c5fd"}}>{p.ticker}</span>
-                    </div>
-                    <div style={{flex:1}}>
-                      <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{p.ticker}</p>
-                      <p style={{margin:0,fontSize:"10px",color:"var(--text-muted)"}}>{p.lot} lot · avg {p.avgPrice.toLocaleString("id-ID")}</p>
-                    </div>
-                    <div style={{textAlign:"right",flexShrink:0}}>
-                      <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{fmt(mktVal)}</p>
-                      <p style={{margin:0,fontSize:"11px",fontWeight:600,color:pnl>=0?"#10b981":"#ef4444"}}>
-                        {pnl>=0?"+":""}{fmt(pnl)} ({pct>=0?"+":""}{pct.toFixed(1)}%)
-                      </p>
-                    </div>
-                    <button onClick={e=>{e.stopPropagation();setConfirmStock(p.ticker);}}
-                      style={{width:"26px",height:"26px",borderRadius:"6px",border:"1px solid #ef444433",background:"#ef444411",cursor:"pointer",fontSize:"11px",color:"#ef4444",flexShrink:0}}>
-                      🗑️
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <p style={{margin:"12px 0 0",fontSize:"10px",color:"var(--text-muted)",textAlign:"center"}}>
-            💡 Tap nama saham untuk lihat chart live • Harga IDX diperbarui harian
-          </p>
+      {/* Portfolio holdings */}
+      <div style={{padding:"12px 16px 0"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+          <p style={{margin:0,fontSize:"12px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>Holdings</p>
+          <button onClick={()=>setShowAddStock(!showAddStock)}
+            style={{fontSize:"11px",padding:"4px 10px",borderRadius:"7px",border:"1px solid var(--border)",background:"transparent",color:"var(--primary)",fontWeight:700,cursor:"pointer"}}>
+            + Saham
+          </button>
         </div>
-      )}
 
-      {/* Chart Tab — TradingView Live */}
-      {tab==="chart"&&(
-        <div style={{padding:"12px 16px 16px"}}>
-          {/* Ticker selector */}
-          <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"12px"}}>
-            {[...new Set([...portfolio.map(p=>p.ticker),...IDX_WATCHLIST.slice(0,5)])].map(t=>(
-              <button key={t} onClick={()=>setActiveChart(t)}
-                style={{padding:"4px 10px",borderRadius:"7px",border:`1.5px solid ${activeChart===t?"var(--primary)":"var(--border)"}`,
-                  background:activeChart===t?"var(--primary)22":"transparent",
-                  cursor:"pointer",fontSize:"11px",fontWeight:700,
-                  color:activeChart===t?"var(--primary)":"var(--text-muted)"}}>
-                {t}
-              </button>
+        {showAddStock&&(
+          <div style={{background:"var(--bg)",borderRadius:"12px",padding:"12px",marginBottom:"10px",display:"flex",gap:"8px",flexWrap:"wrap"}}>
+            {[{p:"Ticker",k:"ticker",w:"80px"},{p:"Lot",k:"lot",w:"60px"},{p:"Avg Price",k:"avgPrice",w:"90px"}].map(f=>(
+              <input key={f.k} placeholder={f.p} value={newStock[f.k]} onChange={e=>setNewStock(p=>({...p,[f.k]:e.target.value}))}
+                style={{width:f.w,padding:"7px 9px",borderRadius:"8px",border:"1.5px solid var(--border)",background:"var(--card-bg)",color:"var(--text)",fontSize:"12px"}}/>
             ))}
+            <button onClick={addStock} style={{padding:"7px 12px",borderRadius:"8px",border:"none",background:"var(--primary)",color:"#fff",fontSize:"12px",fontWeight:700,cursor:"pointer"}}>Add</button>
           </div>
-          {/* TradingView Widget */}
-          <div style={{borderRadius:"12px",overflow:"hidden",border:"1px solid var(--border)"}}>
-            <TradingViewWidget symbol={activeChart}/>
-          </div>
-          <p style={{margin:"8px 0 0",fontSize:"10px",color:"var(--text-muted)",textAlign:"center"}}>
-            📈 Data real-time dari TradingView • Tap nama saham untuk switch chart
-          </p>
-        </div>
-      )}
+        )}
 
-      {/* Watchlist Tab */}
-      {tab==="watchlist"&&(
+        {stocks.length===0 ? (
+          <div style={{textAlign:"center",padding:"20px",color:"var(--text-muted)"}}>
+            <p style={{margin:0,fontSize:"13px"}}>Tap Refresh untuk memuat harga saham terkini 📡</p>
+          </div>
+        ) : (
+          portfolio.map(p=>{
+            const s=stocks.find(s=>s.ticker===p.ticker);
+            const currentPrice = s?.price || p.avgPrice;
+            const marketVal    = currentPrice*p.lot*100;
+            const costVal      = p.avgPrice*p.lot*100;
+            const pnl          = marketVal-costVal;
+            const pnlPct       = costVal>0?(pnl/costVal)*100:0;
+            return(
+              <div key={p.ticker} style={{padding:"10px 0",borderBottom:"1px solid var(--border)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+                  <div style={{width:"38px",height:"38px",borderRadius:"10px",background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:"10px",fontWeight:800,color:"#93c5fd"}}>{p.ticker}</span>
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{p.ticker}</p>
+                    <p style={{margin:0,fontSize:"10px",color:"var(--text-muted)"}}>{p.lot} lot · avg {p.avgPrice.toLocaleString("id-ID")}</p>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{fmt(marketVal)}</p>
+                    <p style={{margin:0,fontSize:"11px",fontWeight:600,color:pnl>=0?"#10b981":"#ef4444"}}>
+                      {pnl>=0?"+":""}{fmt(pnl)} ({pnlPct>=0?"+":""}{pnlPct.toFixed(1)}%)
+                    </p>
+                  </div>
+                  <button onClick={()=>setConfirmStock(p.ticker)}
+                    style={{width:"28px",height:"28px",borderRadius:"7px",border:"1px solid #ef444433",background:"#ef444411",cursor:"pointer",fontSize:"12px",color:"#ef4444",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    🗑️
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Live prices ticker */}
+      {stocks.length>0&&(
         <div style={{padding:"12px 16px 16px"}}>
-          <p style={{margin:"0 0 10px",fontSize:"12px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>
-            Harga IDX (per penutupan terakhir)
-          </p>
+          <p style={{margin:"0 0 8px",fontSize:"11px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>Harga Live IDX</p>
           <div style={{display:"flex",flexDirection:"column",gap:"6px"}}>
-            {IDX_WATCHLIST.filter(t=>IDX_PRICES[t]).map(t=>(
-              <div key={t}
-                onClick={()=>{setActiveChart(t);setTab("chart");}}
-                style={{display:"flex",alignItems:"center",gap:"10px",padding:"9px 10px",background:"var(--bg)",borderRadius:"10px",cursor:"pointer"}}>
-                <span style={{fontSize:"12px",fontWeight:800,color:"var(--text)",width:"48px",flexShrink:0}}>{t}</span>
-                <span style={{fontSize:"13px",fontWeight:700,color:"var(--text)",flex:1}}>{(IDX_PRICES[t]||0).toLocaleString("id-ID")}</span>
-                <span style={{fontSize:"11px",color:"var(--text-muted)"}}>Tap untuk chart →</span>
+            {stocks.map(s=>(
+              <div key={s.ticker} style={{display:"flex",alignItems:"center",gap:"8px",padding:"8px 10px",background:"var(--bg)",borderRadius:"10px"}}>
+                <span style={{fontSize:"11px",fontWeight:800,color:"var(--text)",width:"44px",flexShrink:0}}>{s.ticker}</span>
+                <span style={{fontSize:"12px",fontWeight:700,color:"var(--text)",flex:1}}>{s.price?.toLocaleString("id-ID")}</span>
+                <span style={{fontSize:"11px",fontWeight:700,padding:"2px 7px",borderRadius:"6px",
+                  background:s.change>=0?"#10b98122":"#ef444422",
+                  color:s.change>=0?"#10b981":"#ef4444"}}>
+                  {s.change>=0?"+":""}{s.change?.toFixed(2)}%
+                </span>
+                <span style={{fontSize:"10px",color:"var(--text-muted)",minWidth:"30px",textAlign:"right"}}>{s.volume}</span>
               </div>
             ))}
           </div>
-          <p style={{margin:"12px 0 0",fontSize:"10px",color:"var(--text-muted)",textAlign:"center"}}>
-            Tap saham manapun untuk lihat chart live di TradingView
-          </p>
         </div>
       )}
-
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
       {confirmStock&&<ConfirmDialog
         message={`Hapus saham ${confirmStock} dari portofolio?`}
         onConfirm={()=>{setPortfolio(p=>p.filter(s=>s.ticker!==confirmStock));setConfirmStock(null);}}
@@ -902,7 +883,6 @@ function StockWidget() {
     </div>
   );
 }
-
 
 // ─── Account Form ─────────────────────────────────────────────────────────────
 const ACCOUNT_TYPES = [
@@ -1406,7 +1386,7 @@ function GoalsPage() {
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function SettingsPage() {
-  const {darkMode,setDarkMode,primaryColor,setPrimaryColor,transactions}=useContext(AppContext);
+  const {darkMode,setDarkMode,primaryColor,setPrimaryColor,transactions,user,logout}=useContext(AppContext);
   const colors=[{name:"Biru",value:"#3b82f6"},{name:"Hijau",value:"#10b981"},{name:"Ungu",value:"#8b5cf6"},{name:"Oranye",value:"#f59e0b"},{name:"Pink",value:"#ec4899"},{name:"Teal",value:"#14b8a6"}];
   const exportCSV=()=>{
     const h=["Tanggal","Keterangan","Tipe","Nominal","Kategori","Tags"];
@@ -1418,9 +1398,24 @@ function SettingsPage() {
   return(
     <div style={{padding:"16px 16px 80px"}}>
       <h2 style={{margin:"0 0 20px",fontSize:"20px",fontWeight:800,color:"var(--text)"}}>Pengaturan</h2>
-      <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)",marginBottom:"16px",display:"flex",gap:"14px",alignItems:"center"}}>
-        <div style={{width:"52px",height:"52px",borderRadius:"14px",background:"var(--primary)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px",fontWeight:800,color:"#fff"}}>BS</div>
-        <div><p style={{margin:0,fontSize:"15px",fontWeight:700,color:"var(--text)"}}>Budi Santoso</p><p style={{margin:"2px 0 0",fontSize:"12px",color:"var(--text-muted)"}}>budi@example.com</p></div>
+      <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)",marginBottom:"16px"}}>
+        <div style={{display:"flex",gap:"14px",alignItems:"center",marginBottom:"14px"}}>
+          <div style={{width:"52px",height:"52px",borderRadius:"14px",background:"var(--primary)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px",fontWeight:800,color:"#fff",flexShrink:0}}>
+            {user?.displayName?.slice(0,2).toUpperCase()||"FU"}
+          </div>
+          <div style={{flex:1}}>
+            <p style={{margin:0,fontSize:"15px",fontWeight:700,color:"var(--text)"}}>{user?.displayName||"Pengguna"}</p>
+            <p style={{margin:"2px 0 0",fontSize:"12px",color:"var(--text-muted)"}}>{user?.email}</p>
+            <div style={{display:"flex",alignItems:"center",gap:"4px",marginTop:"4px"}}>
+              <div style={{width:"7px",height:"7px",borderRadius:"50%",background:"#10b981"}}/>
+              <span style={{fontSize:"10px",color:"#10b981",fontWeight:600}}>Terhubung ke Firebase</span>
+            </div>
+          </div>
+        </div>
+        <button onClick={logout}
+          style={{width:"100%",padding:"10px",borderRadius:"11px",border:"1.5px solid #ef444433",background:"#ef444411",color:"#ef4444",fontSize:"13px",fontWeight:700,cursor:"pointer"}}>
+          🚪 Keluar dari Akun
+        </button>
       </div>
       <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)",marginBottom:"16px"}}>
         <h3 style={{margin:"0 0 16px",fontSize:"14px",fontWeight:700,color:"var(--text)"}}>🎨 Tema & Tampilan</h3>
@@ -1829,61 +1824,312 @@ function BottomNav({tab,setTab}) {
 
 // ─── App Root ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [loggedIn,setLoggedIn]          = useState(false);
-  const [tab,setTab]                    = useState("dashboard");
-  const [darkMode,setDarkMode]          = useState(false);
-  const [primaryColor,setPrimaryColor]  = useState("#3b82f6");
-  const [transactions,setTransactions]  = useState(INITIAL_TRANSACTIONS);
-  const [categories]                    = useState(INITIAL_CATEGORIES);
-  const [accounts,setAccounts]          = useState(INITIAL_ACCOUNTS);
-  const [goals,setGoals]                = useState(INITIAL_GOALS);
-  const [recurrings,setRecurrings]      = useState(INITIAL_RECURRINGS);
-  const [showFAB,setShowFAB]            = useState(false);
+  const { user, loading: authLoading, login, register, logout, resetPassword, error: authError, setError } = useAuth();
+  const [tab, setTab]   = useState("dashboard");
+  const [showFAB, setShowFAB] = useState(false);
+  const [authMode, setAuthMode] = useState("login"); // "login" | "register"
+
+  // Firestore real-time data
+  const {
+    transactions: txCol, accounts: accCol, categories: catCol,
+    goals: goalCol, recurrings: recCol, loading: dataLoading
+  } = useFirestoreData(user?.uid);
+
+  const { settings, saveSettings } = useUserSettings(user?.uid);
+
+  // Local state (synced to Firestore)
+  const [darkMode, setDarkModeLocal]       = useState(false);
+  const [primaryColor, setPrimaryColorLocal] = useState("#3b82f6");
+
+  // Sync settings from Firestore
+  useEffect(() => {
+    if (settings.darkMode    !== undefined) setDarkModeLocal(settings.darkMode);
+    if (settings.primaryColor !== undefined) setPrimaryColorLocal(settings.primaryColor);
+  }, [settings.darkMode, settings.primaryColor]);
+
+  const setDarkMode = (val) => {
+    setDarkModeLocal(val);
+    if (user) saveSettings({ ...settings, darkMode: val });
+  };
+  const setPrimaryColor = (val) => {
+    setPrimaryColorLocal(val);
+    if (user) saveSettings({ ...settings, primaryColor: val });
+  };
+
+  // Seed demo data for brand-new users
+  useEffect(() => {
+    if (!user) return;
+    seedUserData(user.uid, {
+      categories:   INITIAL_CATEGORIES,
+      accounts:     INITIAL_ACCOUNTS,
+      transactions: INITIAL_TRANSACTIONS,
+      goals:        INITIAL_GOALS,
+      recurrings:   INITIAL_RECURRINGS,
+    });
+  }, [user?.uid]);
+
+  // ── Firestore CRUD wrappers ──────────────────────────────────────────────
+  // Transactions
+  const setTransactions = { 
+    add:    (item) => txCol.add(item),
+    update: (item) => txCol.update(item.id, item),
+    remove: (id)   => txCol.remove(id),
+    // Legacy array-style setters used in child components → wrap them
+    call: (fn) => {
+      // fn receives prev array, returns new array — we diff and apply
+      const prev = txCol.data;
+      const next = fn(prev);
+      const removed = prev.filter(p => !next.find(n => n.id === p.id));
+      const added   = next.filter(n => !prev.find(p => p.id === n.id));
+      const updated = next.filter(n => prev.find(p => p.id === n.id && JSON.stringify(p) !== JSON.stringify(n)));
+      removed.forEach(r => txCol.remove(r.id));
+      added.forEach(a   => txCol.add(a));
+      updated.forEach(u => txCol.update(u.id, u));
+    }
+  };
+  const setAccounts    = { call: (fn) => diff(accCol,  fn) };
+  const setGoals       = { call: (fn) => diff(goalCol, fn) };
+  const setRecurrings  = { call: (fn) => diff(recCol,  fn) };
+
+  function diff(col, fn) {
+    const prev = col.data;
+    const next = typeof fn === "function" ? fn(prev) : fn;
+    const removed = prev.filter(p => !next.find(n => n.id === p.id));
+    const added   = next.filter(n => !prev.find(p => p.id === n.id));
+    const updated = next.filter(n => {
+      const old = prev.find(p => p.id === n.id);
+      return old && JSON.stringify(old) !== JSON.stringify(n);
+    });
+    removed.forEach(r => col.remove(r.id));
+    added.forEach(a   => col.add(a));
+    updated.forEach(u => col.update(u.id, u));
+  }
+
+  // Provide simple array setters compatible with existing child components
+  const makeSetterFn = (col) => (fn) => diff(col, fn);
 
   const theme = {
     "--primary":      primaryColor,
-    "--primary-dark": primaryColor+"cc",
-    "--bg":           darkMode?"#0f172a":"#f1f5f9",
-    "--card-bg":      darkMode?"#1e293b":"#ffffff",
-    "--text":         darkMode?"#f1f5f9":"#0f172a",
-    "--text-muted":   darkMode?"#94a3b8":"#64748b",
-    "--border":       darkMode?"#334155":"#e2e8f0",
-    "--shadow":       darkMode?"0 2px 8px rgba(0,0,0,0.4)":"0 2px 8px rgba(0,0,0,0.06)",
-    "--shadow-xl":    darkMode?"0 20px 60px rgba(0,0,0,0.6)":"0 20px 60px rgba(0,0,0,0.15)",
+    "--primary-dark": primaryColor + "cc",
+    "--bg":           darkMode ? "#0f172a" : "#f1f5f9",
+    "--card-bg":      darkMode ? "#1e293b" : "#ffffff",
+    "--text":         darkMode ? "#f1f5f9" : "#0f172a",
+    "--text-muted":   darkMode ? "#94a3b8" : "#64748b",
+    "--border":       darkMode ? "#334155" : "#e2e8f0",
+    "--shadow":       darkMode ? "0 2px 8px rgba(0,0,0,0.4)" : "0 2px 8px rgba(0,0,0,0.06)",
+    "--shadow-xl":    darkMode ? "0 20px 60px rgba(0,0,0,0.6)" : "0 20px 60px rgba(0,0,0,0.15)",
   };
 
-  const saveTx=form=>{setTransactions(p=>[{...form,id:`t${Date.now()}`,amount:parseFloat(form.amount)||0},...p]);setShowFAB(false);};
+  const saveTx = (form) => {
+    txCol.add({ ...form, id: `t${Date.now()}`, amount: parseFloat(form.amount) || 0 });
+    setShowFAB(false);
+  };
 
-  if(!loggedIn) return(
-    <div style={{...theme,fontFamily:"'DM Sans',system-ui,sans-serif"}}>
-      <style>{`*{box-sizing:border-box;font-family:'DM Sans',system-ui,sans-serif}::-webkit-scrollbar{width:0}`}</style>
-      <LoginPage onLogin={()=>setLoggedIn(true)}/>
+  // ── Loading screen ────────────────────────────────────────────────────────
+  if (authLoading) return (
+    <div style={{ ...theme, minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "16px", fontFamily: "'DM Sans',system-ui,sans-serif" }}>
+      <div style={{ fontSize: "48px" }}>💰</div>
+      <p style={{ color: "var(--text)", fontWeight: 700, fontSize: "16px" }}>Memuat FinanceKu...</p>
     </div>
   );
 
-  return(
-    <AppContext.Provider value={{transactions,setTransactions,categories,accounts,setAccounts,goals,setGoals,recurrings,setRecurrings,darkMode,setDarkMode,primaryColor,setPrimaryColor}}>
-      <div style={{...theme,minHeight:"100vh",background:"var(--bg)",color:"var(--text)",maxWidth:"430px",margin:"0 auto",position:"relative"}}>
+  // ── Auth screen ───────────────────────────────────────────────────────────
+  if (!user) return (
+    <div style={{ ...theme, fontFamily: "'DM Sans',system-ui,sans-serif" }}>
+      <style>{`*{box-sizing:border-box;font-family:'DM Sans',system-ui,sans-serif}::-webkit-scrollbar{width:0}`}</style>
+      <FirebaseLoginPage
+        mode={authMode} setMode={setAuthMode}
+        onLogin={login} onRegister={register}
+        onResetPassword={resetPassword}
+        error={authError} setError={setError}
+      />
+    </div>
+  );
+
+  // ── Data loading ──────────────────────────────────────────────────────────
+  if (dataLoading) return (
+    <div style={{ ...theme, minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "12px", fontFamily: "'DM Sans',system-ui,sans-serif" }}>
+      <div style={{ fontSize: "40px" }}>📊</div>
+      <p style={{ color: "var(--text)", fontWeight: 700 }}>Menyinkronkan data...</p>
+    </div>
+  );
+
+  // ── Main App ──────────────────────────────────────────────────────────────
+  return (
+    <AppContext.Provider value={{
+      transactions: txCol.data, setTransactions: makeSetterFn(txCol),
+      categories:   catCol.data,
+      accounts:     accCol.data,  setAccounts:    makeSetterFn(accCol),
+      goals:        goalCol.data, setGoals:       makeSetterFn(goalCol),
+      recurrings:   recCol.data,  setRecurrings:  makeSetterFn(recCol),
+      darkMode, setDarkMode, primaryColor, setPrimaryColor,
+      user, logout,
+    }}>
+      <div style={{ ...theme, minHeight: "100vh", background: "var(--bg)", color: "var(--text)", maxWidth: "430px", margin: "0 auto", position: "relative" }}>
         <style>{`
           *{box-sizing:border-box}
           input,select,button{font-family:'DM Sans',system-ui,sans-serif}
           input:focus,select:focus{outline:2px solid ${primaryColor}44;border-color:${primaryColor}!important}
           ::-webkit-scrollbar{width:0}
         `}</style>
-        {tab==="dashboard"    && <Dashboard/>}
-        {tab==="transactions" && <TransactionsPage/>}
-        {tab==="accounts"     && <AccountsPage/>}
-        {tab==="goals"        && <GoalsPage/>}
-        {tab==="recurring"     && <RecurringPage/>}
-        {tab==="settings"     && <SettingsPage/>}
-        <FAB onClick={()=>setShowFAB(true)}/>
-        <BottomNav tab={tab} setTab={setTab}/>
-        {showFAB&&(
-          <Modal title="Tambah Transaksi" onClose={()=>setShowFAB(false)}>
-            <TransactionForm onSave={saveTx} onClose={()=>setShowFAB(false)}/>
+
+        {tab === "dashboard"    && <Dashboard />}
+        {tab === "transactions" && <TransactionsPage />}
+        {tab === "accounts"     && <AccountsPage />}
+        {tab === "goals"        && <GoalsPage />}
+        {tab === "recurring"    && <RecurringPage />}
+        {tab === "settings"     && <SettingsPage />}
+
+        <FAB onClick={() => setShowFAB(true)} />
+        <BottomNav tab={tab} setTab={setTab} />
+
+        {showFAB && (
+          <Modal title="Tambah Transaksi" onClose={() => setShowFAB(false)}>
+            <TransactionForm onSave={saveTx} onClose={() => setShowFAB(false)} />
           </Modal>
         )}
       </div>
     </AppContext.Provider>
+  );
+}
+
+// ─── Firebase Login / Register Page ──────────────────────────────────────────
+function FirebaseLoginPage({ mode, setMode, onLogin, onRegister, onResetPassword, error, setError }) {
+  const [name, setName]           = useState("");
+  const [email, setEmail]         = useState("");
+  const [pass, setPass]           = useState("");
+  const [loading, setLoading]     = useState(false);
+  const [showReset, setShowReset] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+
+  const handle = async () => {
+    setLoading(true);
+    setError("");
+    let result;
+    if (mode === "login") {
+      result = await onLogin(email, pass);
+    } else {
+      if (!name.trim()) { setError("Nama wajib diisi"); setLoading(false); return; }
+      result = await onRegister(email, pass, name);
+    }
+    if (!result.ok) setLoading(false);
+  };
+
+  const handleReset = async () => {
+    if (!resetEmail.trim()) { setError("Masukkan email kamu"); return; }
+    setLoading(true);
+    setError("");
+    const result = await onResetPassword(resetEmail);
+    setLoading(false);
+    if (result.ok) setResetSent(true);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+      <div style={{ width: "100%", maxWidth: "400px" }}>
+        <div style={{ textAlign: "center", marginBottom: "32px" }}>
+          <div style={{ fontSize: "52px", marginBottom: "12px" }}>💰</div>
+          <h1 style={{ fontSize: "28px", fontWeight: 800, color: "var(--text)", margin: "0 0 6px", letterSpacing: "-0.5px" }}>FinanceKu</h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "14px", margin: 0 }}>
+            {mode === "login" ? "Masuk ke akun Anda" : "Buat akun baru gratis"}
+          </p>
+        </div>
+
+        <div style={{ background: "var(--card-bg)", borderRadius: "24px", padding: "28px", boxShadow: "var(--shadow)" }}>
+          {/* Toggle login/register */}
+          <div style={{ display: "flex", background: "var(--bg)", borderRadius: "12px", padding: "4px", marginBottom: "20px" }}>
+            {[["login","Masuk"],["register","Daftar"]].map(([m,l]) => (
+              <button key={m} onClick={() => { setMode(m); setError(""); }}
+                style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "13px", background: mode === m ? "var(--primary)" : "transparent", color: mode === m ? "#fff" : "var(--text-muted)" }}>
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {mode === "register" && (
+            <div style={{ marginBottom: "14px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: "6px" }}>Nama Lengkap</label>
+              <input value={name} onChange={e => setName(e.target.value)} placeholder="Budi Santoso"
+                style={{ width: "100%", padding: "11px 13px", borderRadius: "11px", border: "1.5px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "14px", boxSizing: "border-box" }} />
+            </div>
+          )}
+
+          {[["Email","email",email,setEmail,"budi@example.com"],["Password","password",pass,setPass,"••••••••"]].map(([l,t,v,sv,ph]) => (
+            <div key={l} style={{ marginBottom: "14px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: "6px" }}>{l}</label>
+              <input type={t} value={v} onChange={e => sv(e.target.value)} placeholder={ph}
+                onKeyDown={e => e.key === "Enter" && handle()}
+                style={{ width: "100%", padding: "11px 13px", borderRadius: "11px", border: "1.5px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "14px", boxSizing: "border-box" }} />
+            </div>
+          ))}
+
+          {error && (
+            <div style={{ padding: "10px 13px", borderRadius: "10px", background: "#ef444420", border: "1px solid #ef444440", marginBottom: "14px" }}>
+              <p style={{ margin: 0, fontSize: "13px", color: "#ef4444", fontWeight: 600 }}>⚠️ {error}</p>
+            </div>
+          )}
+
+          {/* Forgot password modal */}
+          {showReset && (
+            <div style={{ background: "var(--bg)", borderRadius: "14px", padding: "16px", marginBottom: "14px", border: "1px solid var(--border)" }}>
+              <p style={{ margin: "0 0 10px", fontSize: "13px", fontWeight: 700, color: "var(--text)" }}>🔑 Reset Password</p>
+              {resetSent ? (
+                <div style={{ textAlign: "center", padding: "8px 0" }}>
+                  <p style={{ margin: "0 0 6px", fontSize: "24px" }}>📧</p>
+                  <p style={{ margin: "0 0 4px", fontSize: "13px", fontWeight: 700, color: "#10b981" }}>Email terkirim!</p>
+                  <p style={{ margin: "0 0 10px", fontSize: "12px", color: "var(--text-muted)" }}>Cek inbox {resetEmail} dan ikuti instruksi reset password.</p>
+                  <button onClick={() => { setShowReset(false); setResetSent(false); setResetEmail(""); }}
+                    style={{ padding: "7px 16px", borderRadius: "8px", border: "none", background: "var(--primary)", color: "#fff", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
+                    Kembali ke Login
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: "6px" }}>Email yang terdaftar</label>
+                  <input value={resetEmail} onChange={e => setResetEmail(e.target.value)} type="email" placeholder="email@kamu.com"
+                    onKeyDown={e => e.key === "Enter" && handleReset()}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: "1.5px solid var(--border)", background: "var(--card-bg)", color: "var(--text)", fontSize: "14px", boxSizing: "border-box", marginBottom: "10px" }} />
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button onClick={() => { setShowReset(false); setError(""); }}
+                      style={{ flex: 1, padding: "9px", borderRadius: "9px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>
+                      Batal
+                    </button>
+                    <button onClick={handleReset} disabled={loading}
+                      style={{ flex: 2, padding: "9px", borderRadius: "9px", border: "none", background: "var(--primary)", color: "#fff", fontSize: "12px", fontWeight: 700, cursor: "pointer", opacity: loading ? 0.7 : 1 }}>
+                      {loading ? "Mengirim..." : "Kirim Email Reset"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {!showReset && (
+            <button onClick={handle} disabled={loading}
+              style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: "var(--primary)", color: "#fff", fontSize: "15px", fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.75 : 1, marginTop: "4px" }}>
+              {loading ? "Memproses..." : mode === "login" ? "Masuk →" : "Buat Akun →"}
+            </button>
+          )}
+
+          {mode === "login" && !showReset && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "14px" }}>
+              <p style={{ margin: 0, fontSize: "12px", color: "var(--text-muted)" }}>
+                Belum punya akun?{" "}
+                <span onClick={() => setMode("register")} style={{ color: "var(--primary)", fontWeight: 700, cursor: "pointer" }}>Daftar gratis</span>
+              </p>
+              <span onClick={() => { setShowReset(true); setResetEmail(email); setError(""); }}
+                style={{ fontSize: "12px", color: "var(--text-muted)", cursor: "pointer", textDecoration: "underline" }}>
+                Lupa password?
+              </span>
+            </div>
+          )}
+        </div>
+
+        <p style={{ textAlign: "center", marginTop: "16px", fontSize: "11px", color: "var(--text-muted)" }}>
+          🔒 Data tersimpan aman di Firebase Cloud
+        </p>
+      </div>
+    </div>
   );
 }
