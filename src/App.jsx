@@ -705,27 +705,14 @@ function StockWidget() {
     setLoading(true);
     try {
       const tickers = [...new Set([...portfolio.map(p=>p.ticker), ...IDX_WATCHLIST.slice(0,5)])];
-      // Yahoo Finance v8 — no API key needed, supports IDX via .JK suffix
-      const symbols = tickers.map(t=>t+".JK").join(",");
-      const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume`;
-      const resp = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
-      const raw  = await resp.json();
-      const data = JSON.parse(raw.contents);
-      const quotes = data?.quoteResponse?.result || [];
-      if(quotes.length === 0) throw new Error("No data");
-      const parsed = quotes.map(q=>({
-        ticker:    q.symbol.replace(".JK",""),
-        price:     Math.round(q.regularMarketPrice),
-        change:    parseFloat((q.regularMarketChangePercent||0).toFixed(2)),
-        changeAmt: Math.round(q.regularMarketChange||0),
-        high:      Math.round(q.regularMarketDayHigh||0),
-        low:       Math.round(q.regularMarketDayLow||0),
-        volume:    q.regularMarketVolume > 1e9 ? (q.regularMarketVolume/1e9).toFixed(1)+"B"
-                 : q.regularMarketVolume > 1e6 ? (q.regularMarketVolume/1e6).toFixed(1)+"M"
-                 : (q.regularMarketVolume/1e3).toFixed(0)+"K",
-      }));
-      setStocks(parsed);
-      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" ✓ Yahoo Finance");
+      const symbols = tickers.join(",");
+      // Pakai Vercel serverless function /api/stocks — no CORS issue
+      const resp = await fetch(`/api/stocks?symbols=${symbols}`);
+      if(!resp.ok) throw new Error("API error "+resp.status);
+      const json = await resp.json();
+      if(!json.data || json.data.length===0) throw new Error("No data");
+      setStocks(json.data);
+      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" ✓ Live");
     } catch(e) {
       // Fallback: harga terkini per 7 Mei 2026 (IDX)
       setStocks([
@@ -738,7 +725,7 @@ function StockWidget() {
         {ticker:"BYAN", price:18500, change: 0.54, changeAmt:100,   high:18600,low:18400,volume:"1.2M"},
         {ticker:"UNVR", price:2290,  change:-0.87, changeAmt:-20,   high:2330, low:2280, volume:"9M"},
       ]);
-      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" (data 7 Mei 2026)");
+      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" (fallback)");
     }
     setLoading(false);
   };
