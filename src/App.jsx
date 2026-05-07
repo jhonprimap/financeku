@@ -925,14 +925,16 @@ function StockWidget() {
 
 // ─── Account Form ─────────────────────────────────────────────────────────────
 const ACCOUNT_TYPES = [
-  {value:"bank",       label:"🏦 Rekening Bank",   color:"#3b82f6"},
-  {value:"ewallet",    label:"💜 E-Wallet",         color:"#8b5cf6"},
-  {value:"credit_card",label:"💳 Kartu Kredit",    color:"#f59e0b"},
-  {value:"investment", label:"📈 Investasi/Saham",  color:"#10b981"},
-  {value:"loan",       label:"🏧 Pinjaman/Utang",   color:"#ef4444"},
-  {value:"property",   label:"🏠 Properti",         color:"#06b6d4"},
-  {value:"vehicle",    label:"🚗 Kendaraan",        color:"#f97316"},
-  {value:"cash",       label:"💵 Kas/Tunai",        color:"#84cc16"},
+  {value:"bank",         label:"🏦 Rekening Bank",     color:"#3b82f6"},
+  {value:"ewallet",      label:"💜 E-Wallet",           color:"#8b5cf6"},
+  {value:"credit_card",  label:"💳 Kartu Kredit",      color:"#f59e0b"},
+  {value:"investment",   label:"📈 Investasi/Saham",    color:"#10b981"},
+  {value:"gold_digital", label:"🥇 Emas Digital",       color:"#f59e0b"},
+  {value:"gold_physical",label:"🏅 Emas Batangan",      color:"#d97706"},
+  {value:"loan",         label:"🏧 Pinjaman/Utang",     color:"#ef4444"},
+  {value:"property",     label:"🏠 Properti",           color:"#06b6d4"},
+  {value:"vehicle",      label:"🚗 Kendaraan",          color:"#f97316"},
+  {value:"cash",         label:"💵 Kas/Tunai",          color:"#84cc16"},
 ];
 const ACC_COLORS=["#3b82f6","#10b981","#8b5cf6","#f59e0b","#ec4899","#14b8a6","#f97316","#ef4444","#06b6d4","#84cc16"];
 
@@ -1037,7 +1039,7 @@ function AccountsPage() {
   const banks  = accounts.filter(a=>a.type==="bank"||a.type==="cash"||a.type==="ewallet");
   const ccs    = accounts.filter(a=>a.type==="credit_card");
   const loans  = accounts.filter(a=>a.type==="loan");
-  const invs   = accounts.filter(a=>a.type==="investment");
+  const invs   = accounts.filter(a=>["investment","gold_digital","gold_physical"].includes(a.type));
   const assets = accounts.filter(a=>["property","vehicle"].includes(a.type));
 
   const { stockPortfolioValue=0 } = useContext(AppContext);
@@ -1047,14 +1049,20 @@ function AccountsPage() {
   const saveAccount = form => {
     const isLiability = ["credit_card","loan"].includes(form.type);
     const bal = parseFloat(form.balance)||0;
+    // Build clean object — no undefined fields (Firestore rejects undefined)
     const acc = {
-      ...form,
-      id: selected?selected.id:`a${Date.now()}`,
+      id:      selected ? selected.id : `a${Date.now()}`,
+      name:    form.name || "Akun Baru",
+      type:    form.type || "bank",
+      color:   form.color || "#3b82f6",
       balance: isLiability ? -Math.abs(bal) : Math.abs(bal),
-      limit: parseFloat(form.limit)||undefined,
-      billing_date: parseInt(form.billing_date)||undefined,
-      due_date: parseInt(form.due_date)||undefined,
+      note:    form.note || "",
     };
+    // Add optional fields only if they have values
+    if(form.limit && parseFloat(form.limit))       acc.limit        = parseFloat(form.limit);
+    if(form.billing_date && parseInt(form.billing_date)) acc.billing_date = parseInt(form.billing_date);
+    if(form.due_date && parseInt(form.due_date))   acc.due_date     = parseInt(form.due_date);
+
     if(selected) {
       accCol.update(acc.id, acc);
     } else {
@@ -1337,16 +1345,16 @@ function GoalsPage() {
 
   const addGoal = form => {
     const g = {
-      id: `g${Date.now()}`,
-      name: form.name||"Target Baru",
-      target: parseFloat(form.target)||0,
-      current: parseFloat(form.current)||0,
-      deadline: form.deadline||"2025-12-31",
-      icon: form.icon||"🎯",
-      color: form.color||"#3b82f6",
+      id:       `g${Date.now()}`,
+      name:     form.name    || "Target Baru",
+      target:   parseFloat(form.target)  || 0,
+      current:  parseFloat(form.current) || 0,
+      deadline: form.deadline || "2026-12-31",
+      icon:     form.icon  || "🎯",
+      color:    form.color || "#3b82f6",
     };
     goalCol.add(g);
-    setModal(null);
+    setModal(null); setSelected(null);
   };
 
   const editGoal = form => {
@@ -1671,15 +1679,22 @@ function RecurringPage() {
 
   const saveRecurring = (form) => {
     const rec = {
-      ...form,
-      id: selected ? selected.id : `r${Date.now()}`,
-      amount: parseFloat(form.amount)||0,
-      day: parseInt(form.day)||1,
-      month: parseInt(form.month)||1,
-      endDate: form.endDate||null,
-      active: true,
-      lastRun: null,
+      id:        selected ? selected.id : `r${Date.now()}`,
+      name:      form.name      || "Transaksi Berulang",
+      amount:    parseFloat(form.amount) || 0,
+      type:      form.type      || "expense",
+      category:  form.category  || "c9",
+      account:   form.account   || "a1",
+      frequency: form.frequency || "monthly",
+      day:       parseInt(form.day)   || 1,
+      month:     parseInt(form.month) || 1,
+      startDate: form.startDate || new Date().toISOString().split("T")[0],
+      note:      form.note  || "",
+      tags:      form.tags  || "",
+      active:    true,
+      lastRun:   "",
     };
+    if(form.endDate && form.endDate.trim()) rec.endDate = form.endDate;
     if(selected) setRecurrings(p=>p.map(r=>r.id===rec.id?rec:r));
     else setRecurrings(p=>[rec,...p]);
     setModal(null); setSelected(null);
