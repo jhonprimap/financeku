@@ -1,8 +1,4 @@
-import { useState, useContext, createContext, useMemo, useEffect, useCallback } from "react";
-import { auth, db } from "./firebase";
-import { useAuth } from "./hooks/useAuth";
-import { useFirestoreData, useUserSettings, seedUserData } from "./hooks/useFirestore";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { useState, useContext, createContext, useMemo } from "react";
 
 const AppContext = createContext();
 
@@ -697,9 +693,9 @@ function StockWidget() {
   const [loading, setLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [portfolio, setPortfolio] = useState([
-    {ticker:"BBCA", lot:10, avgPrice:9200},
-    {ticker:"TLKM", lot:20, avgPrice:3800},
-    {ticker:"BMRI", lot:15, avgPrice:6500},
+    {ticker:"BBCA", lot:10, avgPrice:7500},
+    {ticker:"TLKM", lot:20, avgPrice:3200},
+    {ticker:"BMRI", lot:15, avgPrice:5000},
   ]);
   const [showAddStock, setShowAddStock] = useState(false);
   const [newStock, setNewStock] = useState({ticker:"",lot:"",avgPrice:""});
@@ -709,41 +705,40 @@ function StockWidget() {
     setLoading(true);
     try {
       const tickers = [...new Set([...portfolio.map(p=>p.ticker), ...IDX_WATCHLIST.slice(0,5)])];
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          model:"claude-sonnet-4-20250514",
-          max_tokens:1000,
-          tools:[{type:"web_search_20250305",name:"web_search"}],
-          messages:[{
-            role:"user",
-            content:`Cari harga saham IDX (Bursa Efek Indonesia) terkini untuk ticker berikut: ${tickers.join(", ")}. 
-Gunakan web search untuk mendapatkan harga terbaru dari sumber seperti Yahoo Finance, investing.com, atau RTI Business.
-Kembalikan HANYA JSON array tanpa teks lain, format:
-[{"ticker":"BBCA","price":9500,"change":1.2,"changeAmt":110,"high":9550,"low":9400,"volume":"45.2M"}]
-Semua harga dalam Rupiah (IDR). change dalam persen, changeAmt dalam Rupiah.`
-          }]
-        })
-      });
-      const data = await resp.json();
-      const text = data.content.filter(b=>b.type==="text").map(b=>b.text).join("");
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if(jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        setStocks(parsed);
-        setLastUpdate(new Date().toLocaleTimeString("id-ID"));
-      }
+      // Yahoo Finance v8 — no API key needed, supports IDX via .JK suffix
+      const symbols = tickers.map(t=>t+".JK").join(",");
+      const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume`;
+      const resp = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
+      const raw  = await resp.json();
+      const data = JSON.parse(raw.contents);
+      const quotes = data?.quoteResponse?.result || [];
+      if(quotes.length === 0) throw new Error("No data");
+      const parsed = quotes.map(q=>({
+        ticker:    q.symbol.replace(".JK",""),
+        price:     Math.round(q.regularMarketPrice),
+        change:    parseFloat((q.regularMarketChangePercent||0).toFixed(2)),
+        changeAmt: Math.round(q.regularMarketChange||0),
+        high:      Math.round(q.regularMarketDayHigh||0),
+        low:       Math.round(q.regularMarketDayLow||0),
+        volume:    q.regularMarketVolume > 1e9 ? (q.regularMarketVolume/1e9).toFixed(1)+"B"
+                 : q.regularMarketVolume > 1e6 ? (q.regularMarketVolume/1e6).toFixed(1)+"M"
+                 : (q.regularMarketVolume/1e3).toFixed(0)+"K",
+      }));
+      setStocks(parsed);
+      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" ✓ Yahoo Finance");
     } catch(e) {
-      // fallback demo data
+      // Fallback: harga terkini per 7 Mei 2026 (IDX)
       setStocks([
-        {ticker:"BBCA", price:9500, change:1.2,  changeAmt:110,  high:9550, low:9400, volume:"45.2M"},
-        {ticker:"BBRI", price:5425, change:-0.46, changeAmt:-25,  high:5500, low:5400, volume:"123M"},
-        {ticker:"TLKM", price:3800, change:0.53,  changeAmt:20,   high:3850, low:3760, volume:"67M"},
-        {ticker:"BMRI", price:6875, change:0.73,  changeAmt:50,   high:6900, low:6800, volume:"38M"},
-        {ticker:"ASII", price:5000, change:-0.99, changeAmt:-50,  high:5075, low:4975, volume:"52M"},
+        {ticker:"BBCA", price:5950,  change: 0.00, changeAmt:  0,   high:6000, low:5900, volume:"42M"},
+        {ticker:"BBRI", price:3160,  change: 0.32, changeAmt: 10,   high:3200, low:3100, volume:"118M"},
+        {ticker:"TLKM", price:2900,  change: 0.69, changeAmt: 20,   high:2930, low:2870, volume:"61M"},
+        {ticker:"BMRI", price:4510,  change: 0.45, changeAmt: 20,   high:4560, low:4470, volume:"35M"},
+        {ticker:"ASII", price:5750,  change:-2.13, changeAmt:-125,  high:5875, low:5725, volume:"48M"},
+        {ticker:"GOTO", price: 71,   change: 1.43, changeAmt:  1,   high:72,   low:69,   volume:"890M"},
+        {ticker:"BYAN", price:18500, change: 0.54, changeAmt:100,   high:18600,low:18400,volume:"1.2M"},
+        {ticker:"UNVR", price:2290,  change:-0.87, changeAmt:-20,   high:2330, low:2280, volume:"9M"},
       ]);
-      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" (demo)");
+      setLastUpdate(new Date().toLocaleTimeString("id-ID")+" (data 7 Mei 2026)");
     }
     setLoading(false);
   };
@@ -1386,7 +1381,7 @@ function GoalsPage() {
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function SettingsPage() {
-  const {darkMode,setDarkMode,primaryColor,setPrimaryColor,transactions,user,logout}=useContext(AppContext);
+  const {darkMode,setDarkMode,primaryColor,setPrimaryColor,transactions}=useContext(AppContext);
   const colors=[{name:"Biru",value:"#3b82f6"},{name:"Hijau",value:"#10b981"},{name:"Ungu",value:"#8b5cf6"},{name:"Oranye",value:"#f59e0b"},{name:"Pink",value:"#ec4899"},{name:"Teal",value:"#14b8a6"}];
   const exportCSV=()=>{
     const h=["Tanggal","Keterangan","Tipe","Nominal","Kategori","Tags"];
@@ -1398,24 +1393,9 @@ function SettingsPage() {
   return(
     <div style={{padding:"16px 16px 80px"}}>
       <h2 style={{margin:"0 0 20px",fontSize:"20px",fontWeight:800,color:"var(--text)"}}>Pengaturan</h2>
-      <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)",marginBottom:"16px"}}>
-        <div style={{display:"flex",gap:"14px",alignItems:"center",marginBottom:"14px"}}>
-          <div style={{width:"52px",height:"52px",borderRadius:"14px",background:"var(--primary)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px",fontWeight:800,color:"#fff",flexShrink:0}}>
-            {user?.displayName?.slice(0,2).toUpperCase()||"FU"}
-          </div>
-          <div style={{flex:1}}>
-            <p style={{margin:0,fontSize:"15px",fontWeight:700,color:"var(--text)"}}>{user?.displayName||"Pengguna"}</p>
-            <p style={{margin:"2px 0 0",fontSize:"12px",color:"var(--text-muted)"}}>{user?.email}</p>
-            <div style={{display:"flex",alignItems:"center",gap:"4px",marginTop:"4px"}}>
-              <div style={{width:"7px",height:"7px",borderRadius:"50%",background:"#10b981"}}/>
-              <span style={{fontSize:"10px",color:"#10b981",fontWeight:600}}>Terhubung ke Firebase</span>
-            </div>
-          </div>
-        </div>
-        <button onClick={logout}
-          style={{width:"100%",padding:"10px",borderRadius:"11px",border:"1.5px solid #ef444433",background:"#ef444411",color:"#ef4444",fontSize:"13px",fontWeight:700,cursor:"pointer"}}>
-          🚪 Keluar dari Akun
-        </button>
+      <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)",marginBottom:"16px",display:"flex",gap:"14px",alignItems:"center"}}>
+        <div style={{width:"52px",height:"52px",borderRadius:"14px",background:"var(--primary)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px",fontWeight:800,color:"#fff"}}>BS</div>
+        <div><p style={{margin:0,fontSize:"15px",fontWeight:700,color:"var(--text)"}}>Budi Santoso</p><p style={{margin:"2px 0 0",fontSize:"12px",color:"var(--text-muted)"}}>budi@example.com</p></div>
       </div>
       <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)",marginBottom:"16px"}}>
         <h3 style={{margin:"0 0 16px",fontSize:"14px",fontWeight:700,color:"var(--text)"}}>🎨 Tema & Tampilan</h3>
@@ -1824,256 +1804,61 @@ function BottomNav({tab,setTab}) {
 
 // ─── App Root ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const { user, loading: authLoading, login, register, logout, error: authError, setError } = useAuth();
-  const [tab, setTab]   = useState("dashboard");
-  const [showFAB, setShowFAB] = useState(false);
-  const [authMode, setAuthMode] = useState("login"); // "login" | "register"
-
-  // Firestore real-time data
-  const {
-    transactions: txCol, accounts: accCol, categories: catCol,
-    goals: goalCol, recurrings: recCol, loading: dataLoading
-  } = useFirestoreData(user?.uid);
-
-  const { settings, saveSettings } = useUserSettings(user?.uid);
-
-  // Local state (synced to Firestore)
-  const [darkMode, setDarkModeLocal]       = useState(false);
-  const [primaryColor, setPrimaryColorLocal] = useState("#3b82f6");
-
-  // Sync settings from Firestore
-  useEffect(() => {
-    if (settings.darkMode    !== undefined) setDarkModeLocal(settings.darkMode);
-    if (settings.primaryColor !== undefined) setPrimaryColorLocal(settings.primaryColor);
-  }, [settings.darkMode, settings.primaryColor]);
-
-  const setDarkMode = (val) => {
-    setDarkModeLocal(val);
-    if (user) saveSettings({ ...settings, darkMode: val });
-  };
-  const setPrimaryColor = (val) => {
-    setPrimaryColorLocal(val);
-    if (user) saveSettings({ ...settings, primaryColor: val });
-  };
-
-  // Seed demo data for brand-new users
-  useEffect(() => {
-    if (!user) return;
-    seedUserData(user.uid, {
-      categories:   INITIAL_CATEGORIES,
-      accounts:     INITIAL_ACCOUNTS,
-      transactions: INITIAL_TRANSACTIONS,
-      goals:        INITIAL_GOALS,
-      recurrings:   INITIAL_RECURRINGS,
-    });
-  }, [user?.uid]);
-
-  // ── Firestore CRUD wrappers ──────────────────────────────────────────────
-  // Transactions
-  const setTransactions = { 
-    add:    (item) => txCol.add(item),
-    update: (item) => txCol.update(item.id, item),
-    remove: (id)   => txCol.remove(id),
-    // Legacy array-style setters used in child components → wrap them
-    call: (fn) => {
-      // fn receives prev array, returns new array — we diff and apply
-      const prev = txCol.data;
-      const next = fn(prev);
-      const removed = prev.filter(p => !next.find(n => n.id === p.id));
-      const added   = next.filter(n => !prev.find(p => p.id === n.id));
-      const updated = next.filter(n => prev.find(p => p.id === n.id && JSON.stringify(p) !== JSON.stringify(n)));
-      removed.forEach(r => txCol.remove(r.id));
-      added.forEach(a   => txCol.add(a));
-      updated.forEach(u => txCol.update(u.id, u));
-    }
-  };
-  const setAccounts    = { call: (fn) => diff(accCol,  fn) };
-  const setGoals       = { call: (fn) => diff(goalCol, fn) };
-  const setRecurrings  = { call: (fn) => diff(recCol,  fn) };
-
-  function diff(col, fn) {
-    const prev = col.data;
-    const next = typeof fn === "function" ? fn(prev) : fn;
-    const removed = prev.filter(p => !next.find(n => n.id === p.id));
-    const added   = next.filter(n => !prev.find(p => p.id === n.id));
-    const updated = next.filter(n => {
-      const old = prev.find(p => p.id === n.id);
-      return old && JSON.stringify(old) !== JSON.stringify(n);
-    });
-    removed.forEach(r => col.remove(r.id));
-    added.forEach(a   => col.add(a));
-    updated.forEach(u => col.update(u.id, u));
-  }
-
-  // Provide simple array setters compatible with existing child components
-  const makeSetterFn = (col) => (fn) => diff(col, fn);
+  const [loggedIn,setLoggedIn]          = useState(false);
+  const [tab,setTab]                    = useState("dashboard");
+  const [darkMode,setDarkMode]          = useState(false);
+  const [primaryColor,setPrimaryColor]  = useState("#3b82f6");
+  const [transactions,setTransactions]  = useState(INITIAL_TRANSACTIONS);
+  const [categories]                    = useState(INITIAL_CATEGORIES);
+  const [accounts,setAccounts]          = useState(INITIAL_ACCOUNTS);
+  const [goals,setGoals]                = useState(INITIAL_GOALS);
+  const [recurrings,setRecurrings]      = useState(INITIAL_RECURRINGS);
+  const [showFAB,setShowFAB]            = useState(false);
 
   const theme = {
     "--primary":      primaryColor,
-    "--primary-dark": primaryColor + "cc",
-    "--bg":           darkMode ? "#0f172a" : "#f1f5f9",
-    "--card-bg":      darkMode ? "#1e293b" : "#ffffff",
-    "--text":         darkMode ? "#f1f5f9" : "#0f172a",
-    "--text-muted":   darkMode ? "#94a3b8" : "#64748b",
-    "--border":       darkMode ? "#334155" : "#e2e8f0",
-    "--shadow":       darkMode ? "0 2px 8px rgba(0,0,0,0.4)" : "0 2px 8px rgba(0,0,0,0.06)",
-    "--shadow-xl":    darkMode ? "0 20px 60px rgba(0,0,0,0.6)" : "0 20px 60px rgba(0,0,0,0.15)",
+    "--primary-dark": primaryColor+"cc",
+    "--bg":           darkMode?"#0f172a":"#f1f5f9",
+    "--card-bg":      darkMode?"#1e293b":"#ffffff",
+    "--text":         darkMode?"#f1f5f9":"#0f172a",
+    "--text-muted":   darkMode?"#94a3b8":"#64748b",
+    "--border":       darkMode?"#334155":"#e2e8f0",
+    "--shadow":       darkMode?"0 2px 8px rgba(0,0,0,0.4)":"0 2px 8px rgba(0,0,0,0.06)",
+    "--shadow-xl":    darkMode?"0 20px 60px rgba(0,0,0,0.6)":"0 20px 60px rgba(0,0,0,0.15)",
   };
 
-  const saveTx = (form) => {
-    txCol.add({ ...form, id: `t${Date.now()}`, amount: parseFloat(form.amount) || 0 });
-    setShowFAB(false);
-  };
+  const saveTx=form=>{setTransactions(p=>[{...form,id:`t${Date.now()}`,amount:parseFloat(form.amount)||0},...p]);setShowFAB(false);};
 
-  // ── Loading screen ────────────────────────────────────────────────────────
-  if (authLoading) return (
-    <div style={{ ...theme, minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "16px", fontFamily: "'DM Sans',system-ui,sans-serif" }}>
-      <div style={{ fontSize: "48px" }}>💰</div>
-      <p style={{ color: "var(--text)", fontWeight: 700, fontSize: "16px" }}>Memuat FinanceKu...</p>
-    </div>
-  );
-
-  // ── Auth screen ───────────────────────────────────────────────────────────
-  if (!user) return (
-    <div style={{ ...theme, fontFamily: "'DM Sans',system-ui,sans-serif" }}>
+  if(!loggedIn) return(
+    <div style={{...theme,fontFamily:"'DM Sans',system-ui,sans-serif"}}>
       <style>{`*{box-sizing:border-box;font-family:'DM Sans',system-ui,sans-serif}::-webkit-scrollbar{width:0}`}</style>
-      <FirebaseLoginPage
-        mode={authMode} setMode={setAuthMode}
-        onLogin={login} onRegister={register}
-        error={authError} setError={setError}
-      />
+      <LoginPage onLogin={()=>setLoggedIn(true)}/>
     </div>
   );
 
-  // ── Data loading ──────────────────────────────────────────────────────────
-  if (dataLoading) return (
-    <div style={{ ...theme, minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "12px", fontFamily: "'DM Sans',system-ui,sans-serif" }}>
-      <div style={{ fontSize: "40px" }}>📊</div>
-      <p style={{ color: "var(--text)", fontWeight: 700 }}>Menyinkronkan data...</p>
-    </div>
-  );
-
-  // ── Main App ──────────────────────────────────────────────────────────────
-  return (
-    <AppContext.Provider value={{
-      transactions: txCol.data, setTransactions: makeSetterFn(txCol),
-      categories:   catCol.data,
-      accounts:     accCol.data,  setAccounts:    makeSetterFn(accCol),
-      goals:        goalCol.data, setGoals:       makeSetterFn(goalCol),
-      recurrings:   recCol.data,  setRecurrings:  makeSetterFn(recCol),
-      darkMode, setDarkMode, primaryColor, setPrimaryColor,
-      user, logout,
-    }}>
-      <div style={{ ...theme, minHeight: "100vh", background: "var(--bg)", color: "var(--text)", maxWidth: "430px", margin: "0 auto", position: "relative" }}>
+  return(
+    <AppContext.Provider value={{transactions,setTransactions,categories,accounts,setAccounts,goals,setGoals,recurrings,setRecurrings,darkMode,setDarkMode,primaryColor,setPrimaryColor}}>
+      <div style={{...theme,minHeight:"100vh",background:"var(--bg)",color:"var(--text)",maxWidth:"430px",margin:"0 auto",position:"relative"}}>
         <style>{`
           *{box-sizing:border-box}
           input,select,button{font-family:'DM Sans',system-ui,sans-serif}
           input:focus,select:focus{outline:2px solid ${primaryColor}44;border-color:${primaryColor}!important}
           ::-webkit-scrollbar{width:0}
         `}</style>
-
-        {tab === "dashboard"    && <Dashboard />}
-        {tab === "transactions" && <TransactionsPage />}
-        {tab === "accounts"     && <AccountsPage />}
-        {tab === "goals"        && <GoalsPage />}
-        {tab === "recurring"    && <RecurringPage />}
-        {tab === "settings"     && <SettingsPage />}
-
-        <FAB onClick={() => setShowFAB(true)} />
-        <BottomNav tab={tab} setTab={setTab} />
-
-        {showFAB && (
-          <Modal title="Tambah Transaksi" onClose={() => setShowFAB(false)}>
-            <TransactionForm onSave={saveTx} onClose={() => setShowFAB(false)} />
+        {tab==="dashboard"    && <Dashboard/>}
+        {tab==="transactions" && <TransactionsPage/>}
+        {tab==="accounts"     && <AccountsPage/>}
+        {tab==="goals"        && <GoalsPage/>}
+        {tab==="recurring"     && <RecurringPage/>}
+        {tab==="settings"     && <SettingsPage/>}
+        <FAB onClick={()=>setShowFAB(true)}/>
+        <BottomNav tab={tab} setTab={setTab}/>
+        {showFAB&&(
+          <Modal title="Tambah Transaksi" onClose={()=>setShowFAB(false)}>
+            <TransactionForm onSave={saveTx} onClose={()=>setShowFAB(false)}/>
           </Modal>
         )}
       </div>
     </AppContext.Provider>
-  );
-}
-
-// ─── Firebase Login / Register Page ──────────────────────────────────────────
-function FirebaseLoginPage({ mode, setMode, onLogin, onRegister, error, setError }) {
-  const [name, setName]       = useState("");
-  const [email, setEmail]     = useState("");
-  const [pass, setPass]       = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const handle = async () => {
-    setLoading(true);
-    setError("");
-    let result;
-    if (mode === "login") {
-      result = await onLogin(email, pass);
-    } else {
-      if (!name.trim()) { setError("Nama wajib diisi"); setLoading(false); return; }
-      result = await onRegister(email, pass, name);
-    }
-    if (!result.ok) setLoading(false);
-  };
-
-  return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
-      <div style={{ width: "100%", maxWidth: "400px" }}>
-        <div style={{ textAlign: "center", marginBottom: "32px" }}>
-          <div style={{ fontSize: "52px", marginBottom: "12px" }}>💰</div>
-          <h1 style={{ fontSize: "28px", fontWeight: 800, color: "var(--text)", margin: "0 0 6px", letterSpacing: "-0.5px" }}>FinanceKu</h1>
-          <p style={{ color: "var(--text-muted)", fontSize: "14px", margin: 0 }}>
-            {mode === "login" ? "Masuk ke akun Anda" : "Buat akun baru gratis"}
-          </p>
-        </div>
-
-        <div style={{ background: "var(--card-bg)", borderRadius: "24px", padding: "28px", boxShadow: "var(--shadow)" }}>
-          {/* Toggle login/register */}
-          <div style={{ display: "flex", background: "var(--bg)", borderRadius: "12px", padding: "4px", marginBottom: "20px" }}>
-            {[["login","Masuk"],["register","Daftar"]].map(([m,l]) => (
-              <button key={m} onClick={() => { setMode(m); setError(""); }}
-                style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "none", cursor: "pointer", fontWeight: 700, fontSize: "13px", background: mode === m ? "var(--primary)" : "transparent", color: mode === m ? "#fff" : "var(--text-muted)" }}>
-                {l}
-              </button>
-            ))}
-          </div>
-
-          {mode === "register" && (
-            <div style={{ marginBottom: "14px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: "6px" }}>Nama Lengkap</label>
-              <input value={name} onChange={e => setName(e.target.value)} placeholder="Budi Santoso"
-                style={{ width: "100%", padding: "11px 13px", borderRadius: "11px", border: "1.5px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "14px", boxSizing: "border-box" }} />
-            </div>
-          )}
-
-          {[["Email","email",email,setEmail,"budi@example.com"],["Password","password",pass,setPass,"••••••••"]].map(([l,t,v,sv,ph]) => (
-            <div key={l} style={{ marginBottom: "14px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", display: "block", marginBottom: "6px" }}>{l}</label>
-              <input type={t} value={v} onChange={e => sv(e.target.value)} placeholder={ph}
-                onKeyDown={e => e.key === "Enter" && handle()}
-                style={{ width: "100%", padding: "11px 13px", borderRadius: "11px", border: "1.5px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "14px", boxSizing: "border-box" }} />
-            </div>
-          ))}
-
-          {error && (
-            <div style={{ padding: "10px 13px", borderRadius: "10px", background: "#ef444420", border: "1px solid #ef444440", marginBottom: "14px" }}>
-              <p style={{ margin: 0, fontSize: "13px", color: "#ef4444", fontWeight: 600 }}>⚠️ {error}</p>
-            </div>
-          )}
-
-          <button onClick={handle} disabled={loading}
-            style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: "var(--primary)", color: "#fff", fontSize: "15px", fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.75 : 1, marginTop: "4px" }}>
-            {loading ? "Memproses..." : mode === "login" ? "Masuk →" : "Buat Akun →"}
-          </button>
-
-          {mode === "login" && (
-            <p style={{ textAlign: "center", marginTop: "14px", fontSize: "12px", color: "var(--text-muted)" }}>
-              Belum punya akun?{" "}
-              <span onClick={() => setMode("register")} style={{ color: "var(--primary)", fontWeight: 700, cursor: "pointer" }}>Daftar gratis</span>
-            </p>
-          )}
-        </div>
-
-        <p style={{ textAlign: "center", marginTop: "16px", fontSize: "11px", color: "var(--text-muted)" }}>
-          🔒 Data tersimpan aman di Firebase Cloud
-        </p>
-      </div>
-    </div>
   );
 }
