@@ -194,20 +194,42 @@ function Dashboard() {
   const totalAssets      =accounts.filter(a=>a.balance>0).reduce((s,a)=>s+a.balance,0) + stockPortfolioValue;
   const totalLiabilities =Math.abs(accounts.filter(a=>a.balance<0).reduce((s,a)=>s+a.balance,0));
   const netWorth         =totalAssets-totalLiabilities;
-  const thisMonth        =transactions.filter(t=>t.date.startsWith("2025-06"));
-  const monthIncome      =thisMonth.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
-  const monthExpense     =thisMonth.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
-  const creditCards      =accounts.filter(a=>a.type==="credit_card");
+  // Dynamic current month
+  const now        = new Date();
+  const nowYear    = now.getFullYear();
+  const nowMonth   = now.getMonth(); // 0-indexed
+  const MONTHS     = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agt","Sep","Okt","Nov","Des"];
+
+  const monthKey = (y, m) => `${y}-${String(m+1).padStart(2,"0")}`;
+
+  const getMonthTotals = (y, m) => {
+    const prefix = monthKey(y, m);
+    const txs    = transactions.filter(t=>t.date.startsWith(prefix));
+    return {
+      label:   MONTHS[m],
+      income:  txs.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0),
+      expense: txs.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0),
+    };
+  };
+
+  // Build last 4 months dynamically
+  const barData = Array.from({length:4},(_,i)=>{
+    let m = nowMonth - (3-i);
+    let y = nowYear;
+    if(m < 0) { m += 12; y -= 1; }
+    return getMonthTotals(y, m);
+  });
+
+  const thisMonthData = barData[barData.length-1];
+  const monthIncome   = thisMonthData.income;
+  const monthExpense  = thisMonthData.expense;
+  const thisMonth     = transactions.filter(t=>t.date.startsWith(monthKey(nowYear, nowMonth)));
+  const creditCards   = accounts.filter(a=>a.type==="credit_card");
 
   const expenseByCat=categories
     .filter(c=>c.type==="expense")
     .map(c=>({name:c.name,value:thisMonth.filter(t=>t.type==="expense"&&t.category===c.id).reduce((s,t)=>s+t.amount,0),color:c.color,icon:c.icon}))
     .filter(c=>c.value>0).sort((a,b)=>b.value-a.value);
-
-  const barData=[
-    {label:"Mar",income:11500000,expense:4200000},{label:"Apr",income:14200000,expense:5100000},
-    {label:"Mei",income:12800000,expense:3900000},{label:"Jun",income:monthIncome,expense:monthExpense},
-  ];
 
   return(
     <div style={{padding:"0 0 80px"}}>
@@ -229,7 +251,7 @@ function Dashboard() {
         {/* Pie chart */}
         <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
-            <h3 style={{margin:0,fontSize:"15px",fontWeight:700,color:"var(--text)"}}>Pengeluaran Juni</h3>
+            <h3 style={{margin:0,fontSize:"15px",fontWeight:700,color:"var(--text)"}}>{`Pengeluaran ${MONTHS[nowMonth]}`}</h3>
             <span style={{fontSize:"13px",fontWeight:700,color:"#ef4444"}}>-{fmt(monthExpense)}</span>
           </div>
           <div style={{display:"flex",gap:"16px",alignItems:"center"}}>
