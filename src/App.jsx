@@ -588,6 +588,34 @@ function Dashboard() {
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────────────
+// ─── Goal Linker — link expense to a financial goal ──────────────────────────
+function GoalLinker({form, set}) {
+  const {goals, goalCol} = useContext(AppContext);
+  if(!goals || goals.length===0) return(
+    <p style={{margin:0,fontSize:"11px",color:"var(--text-muted)"}}>Belum ada target — buat di tab 🎯 Target</p>
+  );
+  return(
+    <div style={{display:"flex",flexWrap:"wrap",gap:"7px"}}>
+      <button onClick={()=>set("goalId","")}
+        style={{padding:"5px 11px",borderRadius:"8px",border:`1.5px solid ${!form.goalId?"var(--primary)":"var(--border)"}`,
+          background:!form.goalId?"var(--primary)22":"transparent",
+          cursor:"pointer",fontSize:"11px",fontWeight:600,
+          color:!form.goalId?"var(--primary)":"var(--text-muted)"}}>
+        Tidak ada
+      </button>
+      {goals.map(g=>(
+        <button key={g.id} onClick={()=>set("goalId",g.id)}
+          style={{padding:"5px 11px",borderRadius:"8px",border:`1.5px solid ${form.goalId===g.id?g.color:"var(--border)"}`,
+            background:form.goalId===g.id?`${g.color}22`:"transparent",
+            cursor:"pointer",fontSize:"11px",fontWeight:600,
+            color:form.goalId===g.id?g.color:"var(--text-muted)"}}>
+          {g.icon} {g.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TransactionForm({onSave,onClose,initial}) {
   const {categories,accounts}=useContext(AppContext);
   const [form,setForm]=useState(initial||{amount:"",type:"expense",category:"c4",account:"a1",date:new Date().toISOString().split("T")[0],note:"",tags:""});
@@ -632,25 +660,39 @@ function TransactionForm({onSave,onClose,initial}) {
 }
 
 function TransactionsPage() {
-  const {transactions,setTransactions,categories,txCol}=useContext(AppContext);
+  const {transactions,setTransactions,categories,txCol,goals,goalCol}=useContext(AppContext);
   const [showModal,setShowModal]=useState(false);
   const [editTx,setEditTx]=useState(null);
   const [filter,setFilter]=useState("all");
   const [search,setSearch]=useState("");
   const [confirmId,setConfirmId]=useState(null);
   const filtered=transactions.filter(t=>filter==="all"||t.type===filter).filter(t=>!search||t.note.toLowerCase().includes(search.toLowerCase()));
-  const {applyTxToAccount} = useContext(AppContext);
+  const {applyTxToAccount, updateTxAndBalance} = useContext(AppContext);
   const save=async form=>{
     const tx={...form,id:editTx?editTx.id:`t${Date.now()}`,amount:parseFloat(form.amount)||0};
     if(editTx){
-      // Reverse old transaction effect, apply new
       const oldTx = transactions.find(t=>t.id===editTx.id);
-      if(oldTx) await applyTxToAccount(oldTx, -1); // reverse old
-      await txCol.update(tx.id, tx);
-      await applyTxToAccount(tx, 1); // apply new
+      if(oldTx) {
+        await updateTxAndBalance(oldTx, tx);
+        // Update goal if changed
+        if(oldTx.goalId && oldTx.goalId !== tx.goalId) {
+          const oldGoal = goals.find(g=>g.id===oldTx.goalId);
+          if(oldGoal) goalCol.update(oldGoal.id, {...oldGoal, current: Math.max(0,(oldGoal.current||0)-oldTx.amount)});
+        }
+        if(tx.goalId && tx.type==="expense") {
+          const goal = goals.find(g=>g.id===tx.goalId);
+          if(goal) goalCol.update(goal.id, {...goal, current: Math.min(goal.target,(goal.current||0)+(tx.amount-((oldTx.goalId===tx.goalId?oldTx.amount:0))))});
+        }
+      } else {
+        await txCol.update(tx.id, tx);
+      }
     } else {
       await txCol.add(tx);
       await applyTxToAccount(tx, 1);
+      if(tx.goalId && tx.type==="expense") {
+        const goal = goals.find(g=>g.id===tx.goalId);
+        if(goal) goalCol.update(goal.id, {...goal, current: Math.min(goal.target,(goal.current||0)+tx.amount)});
+      }
     }
     setShowModal(false);setEditTx(null);
   };
@@ -1451,9 +1493,16 @@ function GoalForm({onSave, initial}) {
 }
 
 function TopUpForm({goal, onSave}) {
-  const [amount,setAmount] = useState("");
+  const {accounts, categories} = useContext(AppContext);
+  const [amount, setAmount]     = useState("");
+  const [account, setAccount]   = useState(accounts[0]?.id || "");
+  const [note, setNote]         = useState(`Dana ${goal.name}`);
   const remaining = goal.target - goal.current;
   const quickAmounts = [100000,500000,1000000,Math.min(5000000,remaining)].filter((v,i,a)=>a.indexOf(v)===i&&v>0);
+
+  // Find or use savings category
+  const savingsCat = categories.find(c=>c.name==="Tabungan"||c.name==="Investasi"||c.type==="expense") || categories[0];
+
   return(
     <div style={{display:"flex",flexDirection:"column",gap:"14px"}}>
       {/* Goal summary */}
@@ -1474,8 +1523,8 @@ function TopUpForm({goal, onSave}) {
 
       {/* Quick amounts */}
       <div>
-        <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"8px"}}>Top-up Cepat</label>
-        <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+        <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"8px"}}>Nominal Top-up</label>
+        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginBottom:"8px"}}>
           {quickAmounts.map(v=>(
             <button key={v} onClick={()=>setAmount(String(v))}
               style={{padding:"6px 12px",borderRadius:"8px",border:`1.5px solid ${amount===String(v)?"var(--primary)":"var(--border)"}`,background:amount===String(v)?"var(--primary)22":"transparent",cursor:"pointer",fontSize:"12px",fontWeight:600,color:amount===String(v)?"var(--primary)":"var(--text-muted)"}}>
@@ -1483,27 +1532,49 @@ function TopUpForm({goal, onSave}) {
             </button>
           ))}
         </div>
-      </div>
-
-      <div>
-        <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>Nominal Lainnya (Rp)</label>
-        <input value={amount} onChange={e=>setAmount(e.target.value)} type="number" placeholder="0"
+        <input value={amount} onChange={e=>setAmount(e.target.value)} type="number" placeholder="Nominal lainnya..."
           style={{width:"100%",padding:"10px 12px",borderRadius:"10px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"14px",boxSizing:"border-box"}}/>
       </div>
 
+      {/* Account selector */}
+      <div>
+        <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>Diambil dari Akun</label>
+        <select value={account} onChange={e=>setAccount(e.target.value)}
+          style={{width:"100%",padding:"10px 12px",borderRadius:"10px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"14px"}}>
+          {accounts.map(a=><option key={a.id} value={a.id}>{a.name} ({fmtF(a.balance)})</option>)}
+        </select>
+      </div>
+
+      {/* Note */}
+      <div>
+        <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>Catatan Transaksi</label>
+        <input value={note} onChange={e=>setNote(e.target.value)} type="text"
+          style={{width:"100%",padding:"10px 12px",borderRadius:"10px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"14px",boxSizing:"border-box"}}/>
+      </div>
+
+      {/* Preview */}
       {amount>0 && (
-        <div style={{padding:"10px 12px",borderRadius:"10px",background:"#10b98115",border:"1px solid #10b98133"}}>
-          <p style={{margin:0,fontSize:"12px",color:"#10b981",fontWeight:600}}>
-            Setelah top-up: {fmtF(goal.current + parseFloat(amount||0))} / {fmtF(goal.target)}
-            {" "}({Math.min(100,((goal.current+parseFloat(amount||0))/goal.target*100)).toFixed(0)}%)
+        <div style={{padding:"12px",borderRadius:"12px",background:"#10b98115",border:"1px solid #10b98133",display:"flex",flexDirection:"column",gap:"4px"}}>
+          <p style={{margin:0,fontSize:"12px",color:"#10b981",fontWeight:700}}>✅ Yang akan terjadi:</p>
+          <p style={{margin:0,fontSize:"11px",color:"var(--text-muted)"}}>
+            • Saldo akun berkurang <strong>{fmt(parseFloat(amount))}</strong>
+          </p>
+          <p style={{margin:0,fontSize:"11px",color:"var(--text-muted)"}}>
+            • Progress target naik ke <strong>{Math.min(100,((goal.current+parseFloat(amount))/goal.target*100)).toFixed(0)}%</strong> ({fmtF(goal.current+parseFloat(amount))})
+          </p>
+          <p style={{margin:0,fontSize:"11px",color:"var(--text-muted)"}}>
+            • Tercatat di Transaksi sebagai <strong>pengeluaran</strong> dengan tag #target
           </p>
         </div>
       )}
 
-      <button onClick={()=>onSave(parseFloat(amount)||0)}
-        disabled={!amount||parseFloat(amount)<=0}
-        style={{padding:"13px",borderRadius:"12px",border:"none",background:(!amount||parseFloat(amount)<=0)?"var(--border)":"var(--primary)",color:(!amount||parseFloat(amount)<=0)?"var(--text-muted)":"#fff",fontSize:"15px",fontWeight:700,cursor:(!amount||parseFloat(amount)<=0)?"not-allowed":"pointer"}}>
-        💰 Tambah Dana
+      <button onClick={()=>onSave({amount:parseFloat(amount)||0, account, note, category: savingsCat?.id})}
+        disabled={!amount||parseFloat(amount)<=0||!account}
+        style={{padding:"13px",borderRadius:"12px",border:"none",
+          background:(!amount||parseFloat(amount)<=0)?"var(--border)":"var(--primary)",
+          color:(!amount||parseFloat(amount)<=0)?"var(--text-muted)":"#fff",
+          fontSize:"15px",fontWeight:700,cursor:(!amount||parseFloat(amount)<=0)?"not-allowed":"pointer"}}>
+        💰 Tambah Dana & Catat Transaksi
       </button>
     </div>
   );
@@ -1541,8 +1612,36 @@ function GoalsPage() {
     setModal(null); setSelected(null);
   };
 
-  const topUpGoal = (amount) => {
-    goalCol.update(selected.id, {...selected, current:Math.min(selected.target, selected.current+amount)});
+  const {applyTxToAccount, txCol} = useContext(AppContext);
+  const topUpGoal = async (data) => {
+    const amount = typeof data === "number" ? data : data.amount;
+    const account = typeof data === "object" ? data.account : null;
+    const note    = typeof data === "object" ? data.note : `Dana ${selected.name}`;
+    const category= typeof data === "object" ? data.category : null;
+
+    // 1. Update goal progress
+    goalCol.update(selected.id, {
+      ...selected,
+      current: Math.min(selected.target, selected.current + amount)
+    });
+
+    // 2. Record as expense transaction
+    if(account && txCol) {
+      const tx = {
+        id:       `t${Date.now()}`,
+        amount,
+        type:     "expense",
+        category: category || "c9",
+        account,
+        date:     new Date().toISOString().split("T")[0],
+        note:     note || `Dana ${selected.name}`,
+        tags:     ["target", selected.name.toLowerCase().replace(/\s+/g,"-")],
+        goalId:   selected.id,
+      };
+      await txCol.add(tx);
+      await applyTxToAccount(tx, 1);
+    }
+
     setModal(null); setSelected(null);
   };
 
@@ -1808,9 +1907,19 @@ function RecurringForm({onSave, initial}) {
         <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>Akun</label>
         <select value={form.account} onChange={e=>set("account",e.target.value)}
           style={{width:"100%",padding:"10px 12px",borderRadius:"10px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"14px"}}>
-          {accounts.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+          {accounts.map(a=><option key={a.id} value={a.id}>{a.name} ({fmtF(a.balance)})</option>)}
         </select>
       </div>
+
+      {/* Link to Goal (optional, for expense) */}
+      {form.type==="expense"&&(
+        <div>
+          <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>
+            🎯 Untuk Target Finansial <span style={{fontWeight:400,color:"var(--text-muted)"}}>(opsional)</span>
+          </label>
+          <GoalLinker form={form} set={set}/>
+        </div>
+      )}
 
       {/* Note & Tags */}
       {[{l:"Catatan",k:"note",p:"Contoh: Polis No. 12345"},{l:"Tags (pisah koma)",k:"tags",p:"asuransi, rutin..."}].map(f=>(
@@ -2172,7 +2281,6 @@ export default function App() {
 
   // ── Update account balance when transaction is saved ──────────────────────
   const applyTxToAccount = useCallback(async (tx, sign=1) => {
-    // sign: +1 = apply, -1 = reverse
     if(!tx.account) return;
     const acc = accCol.data.find(a => a.id === tx.account);
     if(!acc) return;
@@ -2180,10 +2288,48 @@ export default function App() {
     await accCol.update(acc.id, { ...acc, balance: (acc.balance||0) + delta });
   }, [accCol]);
 
+  // ── Update account for EDIT: reverse old, apply new atomically ────────────
+  const updateTxAndBalance = useCallback(async (oldTx, newTx) => {
+    // Get fresh account balance ONCE before any changes
+    const acc = accCol.data.find(a => a.id === (oldTx.account || newTx.account));
+    if(!acc) {
+      await txCol.update(newTx.id, newTx);
+      return;
+    }
+
+    // Calculate net delta:
+    // reverse old tx effect + apply new tx effect
+    const oldDelta = oldTx.type === "income" ? oldTx.amount : -oldTx.amount;
+    const newDelta = newTx.type === "income" ? newTx.amount : -newTx.amount;
+
+    let newBalance = acc.balance || 0;
+
+    // If account changed, we need to handle both accounts
+    if(oldTx.account !== newTx.account) {
+      // Reverse from old account
+      const oldAcc = accCol.data.find(a => a.id === oldTx.account);
+      if(oldAcc) await accCol.update(oldAcc.id, {...oldAcc, balance: (oldAcc.balance||0) - oldDelta});
+      // Apply to new account
+      const newAcc = accCol.data.find(a => a.id === newTx.account);
+      if(newAcc) await accCol.update(newAcc.id, {...newAcc, balance: (newAcc.balance||0) + newDelta});
+    } else {
+      // Same account — apply net change in one operation
+      const netDelta = newDelta - oldDelta;
+      await accCol.update(acc.id, {...acc, balance: newBalance + netDelta});
+    }
+
+    await txCol.update(newTx.id, newTx);
+  }, [accCol, txCol]);
+
   const saveTx = async (form) => {
     const tx = { ...form, id: `t${Date.now()}`, amount: parseFloat(form.amount) || 0 };
     await txCol.add(tx);
     await applyTxToAccount(tx, 1);
+    // If linked to a goal, update goal progress
+    if(tx.goalId && tx.type==="expense") {
+      const goal = goalCol.data.find(g=>g.id===tx.goalId);
+      if(goal) goalCol.update(goal.id, {...goal, current: Math.min(goal.target, (goal.current||0)+tx.amount)});
+    }
     setShowFAB(false);
   };
 
@@ -2222,12 +2368,13 @@ export default function App() {
       transactions: txCol.data, setTransactions: makeSetterFn(txCol), txCol,
       categories:   catCol.data,
       accounts:     accCol.data,  setAccounts:    makeSetterFn(accCol), accCol,
-      goals:        goalCol.data, setGoals:       makeSetterFn(goalCol), goalCol,
+      goals:        goalCol.data, setGoals:       makeSetterFn(goalCol), goalCol, goalColRaw: goalCol,
       recurrings:   recCol.data,  setRecurrings:  makeSetterFn(recCol), recCol, txCol,
       darkMode, setDarkMode, primaryColor, setPrimaryColor,
       user, logout,
       stockPortfolioValue,
       applyTxToAccount,
+      updateTxAndBalance,
     }}>
       <div style={{ ...theme, minHeight: "100vh", background: "var(--bg)", color: "var(--text)", maxWidth: "430px", margin: "0 auto", position: "relative" }}>
         <style>{`
