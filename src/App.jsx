@@ -2299,7 +2299,8 @@ function BottomNav({tab,setTab}) {
 export default function App() {
   const { user, loading: authLoading, login, register, logout, resetPassword, error: authError, setError } = useAuth();
   const [tab, setTab]   = useState("dashboard");
-  const [showFAB, setShowFAB] = useState(false);
+  const [showFAB, setShowFAB]           = useState(false);
+  const [showTransfer, setShowTransfer]  = useState(false);
   const [authMode, setAuthMode] = useState("login"); // "login" | "register"
 
   // Firestore real-time data
