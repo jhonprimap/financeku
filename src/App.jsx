@@ -632,21 +632,35 @@ function TransactionForm({onSave,onClose,initial}) {
 }
 
 function TransactionsPage() {
-  const {transactions,setTransactions,categories}=useContext(AppContext);
+  const {transactions,setTransactions,categories,txCol}=useContext(AppContext);
   const [showModal,setShowModal]=useState(false);
   const [editTx,setEditTx]=useState(null);
   const [filter,setFilter]=useState("all");
   const [search,setSearch]=useState("");
   const [confirmId,setConfirmId]=useState(null);
   const filtered=transactions.filter(t=>filter==="all"||t.type===filter).filter(t=>!search||t.note.toLowerCase().includes(search.toLowerCase()));
-  const save=form=>{
+  const {applyTxToAccount} = useContext(AppContext);
+  const save=async form=>{
     const tx={...form,id:editTx?editTx.id:`t${Date.now()}`,amount:parseFloat(form.amount)||0};
-    if(editTx) setTransactions(p=>p.map(t=>t.id===tx.id?tx:t));
-    else setTransactions(p=>[tx,...p]);
+    if(editTx){
+      // Reverse old transaction effect, apply new
+      const oldTx = transactions.find(t=>t.id===editTx.id);
+      if(oldTx) await applyTxToAccount(oldTx, -1); // reverse old
+      await txCol.update(tx.id, tx);
+      await applyTxToAccount(tx, 1); // apply new
+    } else {
+      await txCol.add(tx);
+      await applyTxToAccount(tx, 1);
+    }
     setShowModal(false);setEditTx(null);
   };
   const del=id=>setConfirmId(id);
-  const doDelete=()=>{setTransactions(p=>p.filter(t=>t.id!==confirmId));setConfirmId(null);};
+  const doDelete=async()=>{
+    const tx=transactions.find(t=>t.id===confirmId);
+    if(tx) await applyTxToAccount(tx,-1); // reverse effect on account
+    setTransactions(p=>p.filter(t=>t.id!==confirmId));
+    setConfirmId(null);
+  };
   return(
     <div style={{padding:"16px 16px 80px"}}>
       <h2 style={{margin:"0 0 16px",fontSize:"20px",fontWeight:800,color:"var(--text)"}}>Transaksi</h2>
@@ -1829,7 +1843,7 @@ function RecurringForm({onSave, initial}) {
 }
 
 function RecurringPage() {
-  const {recurrings, setRecurrings, setTransactions, categories, recCol, txCol} = useContext(AppContext);
+  const {recurrings, setRecurrings, setTransactions, categories, recCol, txCol, applyTxToAccount} = useContext(AppContext);
   const [modal, setModal]       = useState(null);
   const [selected, setSelected] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
@@ -1869,7 +1883,8 @@ function RecurringPage() {
       note: rec.name,
       tags: Array.isArray(rec.tags) ? rec.tags : (rec.tags||"").split(",").map(t=>t.trim()).filter(Boolean),
     };
-    txCol.add(tx);
+    await txCol.add(tx);
+    await applyTxToAccount(tx, 1);
     recCol.update(rec.id, {...rec, lastRun:tx.date});
     alert(`✅ Transaksi "${rec.name}" berhasil dicatat!`);
   };
@@ -2155,8 +2170,20 @@ export default function App() {
     "--shadow-xl":    darkMode ? "0 20px 60px rgba(0,0,0,0.6)" : "0 20px 60px rgba(0,0,0,0.15)",
   };
 
-  const saveTx = (form) => {
-    txCol.add({ ...form, id: `t${Date.now()}`, amount: parseFloat(form.amount) || 0 });
+  // ── Update account balance when transaction is saved ──────────────────────
+  const applyTxToAccount = useCallback(async (tx, sign=1) => {
+    // sign: +1 = apply, -1 = reverse
+    if(!tx.account) return;
+    const acc = accCol.data.find(a => a.id === tx.account);
+    if(!acc) return;
+    const delta = tx.type === "income" ? tx.amount * sign : -tx.amount * sign;
+    await accCol.update(acc.id, { ...acc, balance: (acc.balance||0) + delta });
+  }, [accCol]);
+
+  const saveTx = async (form) => {
+    const tx = { ...form, id: `t${Date.now()}`, amount: parseFloat(form.amount) || 0 };
+    await txCol.add(tx);
+    await applyTxToAccount(tx, 1);
     setShowFAB(false);
   };
 
@@ -2192,7 +2219,7 @@ export default function App() {
   // ── Main App ──────────────────────────────────────────────────────────────
   return (
     <AppContext.Provider value={{
-      transactions: txCol.data, setTransactions: makeSetterFn(txCol),
+      transactions: txCol.data, setTransactions: makeSetterFn(txCol), txCol,
       categories:   catCol.data,
       accounts:     accCol.data,  setAccounts:    makeSetterFn(accCol), accCol,
       goals:        goalCol.data, setGoals:       makeSetterFn(goalCol), goalCol,
@@ -2200,6 +2227,7 @@ export default function App() {
       darkMode, setDarkMode, primaryColor, setPrimaryColor,
       user, logout,
       stockPortfolioValue,
+      applyTxToAccount,
     }}>
       <div style={{ ...theme, minHeight: "100vh", background: "var(--bg)", color: "var(--text)", maxWidth: "430px", margin: "0 auto", position: "relative" }}>
         <style>{`
