@@ -83,6 +83,104 @@ function ProgressBar({pct,color}) {
   );
 }
 
+// ─── Net Worth Chart ──────────────────────────────────────────────────────────
+function NetWorthChart({ data }) {
+  const [hovered, setHovered] = useState(null);
+  if(!data || data.length === 0) return null;
+
+  const values  = data.map(d => d.netWorth);
+  const minVal  = Math.min(...values);
+  const maxVal  = Math.max(...values);
+  const range   = maxVal - minVal || 1;
+  const W = 300, H = 100, PAD = 10;
+  const chartW  = W - PAD*2;
+  const chartH  = H - PAD*2 - 20; // 20px for labels
+
+  // Calculate points
+  const pts = data.map((d, i) => ({
+    x: PAD + (i / (data.length-1)) * chartW,
+    y: PAD + chartH - ((d.netWorth - minVal) / range) * chartH,
+    ...d
+  }));
+
+  // Build SVG path
+  const linePath = pts.map((p,i) => `${i===0?"M":"L"} ${p.x} ${p.y}`).join(" ");
+
+  // Build fill area
+  const fillPath = `${linePath} L ${pts[pts.length-1].x} ${PAD+chartH} L ${pts[0].x} ${PAD+chartH} Z`;
+
+  const trend = values[values.length-1] >= values[0];
+  const color = trend ? "#10b981" : "#ef4444";
+
+  return(
+    <div style={{position:"relative"}}>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{overflow:"visible"}}>
+        <defs>
+          <linearGradient id="nwGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
+            <stop offset="100%" stopColor={color} stopOpacity="0.02"/>
+          </linearGradient>
+        </defs>
+
+        {/* Fill area */}
+        <path d={fillPath} fill="url(#nwGrad)"/>
+
+        {/* Line */}
+        <path d={linePath} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>
+
+        {/* Data points */}
+        {pts.map((p,i)=>(
+          <g key={i}>
+            <circle cx={p.x} cy={p.y} r={hovered===i?6:4}
+              fill={hovered===i?color:"var(--card-bg)"}
+              stroke={color} strokeWidth="2"
+              style={{cursor:"pointer",transition:"r 0.15s"}}
+              onMouseEnter={()=>setHovered(i)}
+              onMouseLeave={()=>setHovered(null)}
+            />
+            {/* Month label */}
+            <text x={p.x} y={PAD+chartH+16} textAnchor="middle"
+              fontSize="10" fill="var(--text-muted)" fontFamily="DM Sans,system-ui">
+              {p.label}
+            </text>
+          </g>
+        ))}
+
+        {/* Hover tooltip */}
+        {hovered !== null && (
+          <g>
+            <rect
+              x={pts[hovered].x - 55}
+              y={pts[hovered].y - 36}
+              width="110" height="28" rx="6"
+              fill="var(--text)" opacity="0.9"
+            />
+            <text
+              x={pts[hovered].x} y={pts[hovered].y - 17}
+              textAnchor="middle" fontSize="11" fontWeight="700"
+              fill="var(--card-bg)" fontFamily="DM Sans,system-ui">
+              {fmtF(pts[hovered].netWorth)}
+            </text>
+          </g>
+        )}
+      </svg>
+
+      {/* Trend badge */}
+      <div style={{
+        position:"absolute", top:0, right:0,
+        padding:"3px 8px", borderRadius:"8px",
+        background: trend?"#10b98122":"#ef444422",
+        border:`1px solid ${trend?"#10b98144":"#ef444444"}`
+      }}>
+        <span style={{fontSize:"11px",fontWeight:700,color}}>
+          {trend?"▲":"▼"} {((values[values.length-1]-values[0])/Math.abs(values[0]||1)*100).toFixed(1)}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
+
 function PieChart({data,size=120}) {
   const total=data.reduce((s,d)=>s+d.value,0);
   if(!total) return null;
@@ -226,6 +324,40 @@ function Dashboard() {
   const thisMonth     = transactions.filter(t=>t.date.startsWith(monthKey(nowYear, nowMonth)));
   const creditCards   = accounts.filter(a=>a.type==="credit_card");
 
+  // ── Net Worth history (3 bulan terakhir) ──────────────────────────────────
+  const calcNetWorthAtEndOfMonth = (year, month) => {
+    // Get all transactions UP TO end of that month
+    const endDate = `${year}-${String(month+1).padStart(2,"0")}-31`;
+    const txsUntil = transactions.filter(t => t.date <= endDate);
+
+    // Start from current account balances, then reverse transactions after that month
+    const txsAfter = transactions.filter(t => t.date > endDate);
+    
+    // Net worth = current account balances - effect of future transactions
+    let accountAdjustment = 0;
+    txsAfter.forEach(t => {
+      if(t.type === "income")  accountAdjustment -= t.amount;
+      if(t.type === "expense") accountAdjustment += t.amount;
+    });
+
+    const baseNetWorth = accounts.reduce((s,a) => s + (a.balance||0), 0) + stockPortfolioValue;
+    return baseNetWorth + accountAdjustment;
+  };
+
+  const netWorthData = Array.from({length:3}, (_,i) => {
+    let m = nowMonth - (2-i);
+    let y = nowYear;
+    if(m < 0) { m += 12; y -= 1; }
+    const isCurrentMonth = (m === nowMonth && y === nowYear);
+    return {
+      label:    MONTHS[m],
+      netWorth: isCurrentMonth
+        ? accounts.reduce((s,a)=>s+(a.balance||0),0) + stockPortfolioValue // live value
+        : calcNetWorthAtEndOfMonth(y, m),                                   // end-of-month value
+      isCurrent: isCurrentMonth,
+    };
+  });
+
   const expenseByCat=categories
     .filter(c=>c.type==="expense")
     .map(c=>({name:c.name,value:thisMonth.filter(t=>t.type==="expense"&&t.category===c.id).reduce((s,t)=>s+t.amount,0),color:c.color,icon:c.icon}))
@@ -247,6 +379,25 @@ function Dashboard() {
       <div style={{padding:"0 16px",display:"flex",flexDirection:"column",gap:"16px"}}>
 
 
+
+        {/* Net Worth Chart */}
+        <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
+            <div>
+              <h3 style={{margin:0,fontSize:"15px",fontWeight:700,color:"var(--text)"}}>📈 Grafik Net Worth</h3>
+              <p style={{margin:"2px 0 0",fontSize:"11px",color:"var(--text-muted)"}}>3 bulan terakhir · hover untuk detail</p>
+            </div>
+          </div>
+          <NetWorthChart data={netWorthData}/>
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--border)"}}>
+            {netWorthData.map((d,i)=>(
+              <div key={i} style={{textAlign: i===1?"center":i===2?"right":"left"}}>
+                <p style={{margin:0,fontSize:"10px",color:"var(--text-muted)"}}>{d.label}{d.isCurrent?" (skrg)":""}</p>
+                <p style={{margin:0,fontSize:"12px",fontWeight:700,color:d.netWorth>=0?"var(--text)":"#ef4444"}}>{fmt(d.netWorth)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* Pie chart */}
         <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)"}}>
@@ -1916,8 +2067,218 @@ function RecurringPage() {
   );
 }
 
-function FAB({onClick}) {
-  return(<button onClick={onClick} style={{position:"fixed",bottom:"80px",right:"20px",width:"56px",height:"56px",borderRadius:"18px",background:"var(--primary)",border:"none",color:"#fff",fontSize:"24px",cursor:"pointer",boxShadow:"0 4px 20px var(--primary)88",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>);
+// ─── Transfer Antar Akun ─────────────────────────────────────────────────────
+function TransferModal({onClose}) {
+  const {accounts, txCol, applyTxToAccount, categories} = useContext(AppContext);
+  const [fromAcc, setFromAcc] = useState(accounts[0]?.id||"");
+  const [toAcc,   setToAcc]   = useState(accounts[1]?.id||"");
+  const [amount,  setAmount]  = useState("");
+  const [note,    setNote]    = useState("Transfer antar akun");
+  const [loading, setLoading] = useState(false);
+  const [done,    setDone]    = useState(false);
+
+  const fromAccount = accounts.find(a=>a.id===fromAcc);
+  const toAccount   = accounts.find(a=>a.id===toAcc);
+
+  // Find transfer category or use first expense
+  const transferCat = categories.find(c=>c.name==="Transfer")||categories.find(c=>c.type==="expense")||categories[0];
+
+  const handleTransfer = async () => {
+    if(!fromAcc||!toAcc||!amount||parseFloat(amount)<=0) return;
+    if(fromAcc===toAcc){ alert("Akun sumber dan tujuan harus berbeda!"); return; }
+    setLoading(true);
+
+    const nominal = parseFloat(amount);
+    const date    = new Date().toISOString().split("T")[0];
+    const ts      = Date.now();
+
+    // Tx 1: Pengeluaran dari akun sumber
+    const txOut = {
+      id:       `t${ts}`,
+      amount:   nominal,
+      type:     "expense",
+      category: transferCat?.id || "c9",
+      account:  fromAcc,
+      date,
+      note:     `${note} → ${toAccount?.name}`,
+      tags:     ["transfer"],
+    };
+
+    // Tx 2: Pemasukan ke akun tujuan
+    const txIn = {
+      id:       `t${ts+1}`,
+      amount:   nominal,
+      type:     "income",
+      category: transferCat?.id || "c1",
+      account:  toAcc,
+      date,
+      note:     `${note} ← ${fromAccount?.name}`,
+      tags:     ["transfer"],
+    };
+
+    try {
+      await txCol.add(txOut);
+      await applyTxToAccount(txOut, 1);
+      await txCol.add(txIn);
+      await applyTxToAccount(txIn, 1);
+      setDone(true);
+    } catch(e) {
+      alert("Transfer gagal: " + e.message);
+    }
+    setLoading(false);
+  };
+
+  if(done) return(
+    <div style={{textAlign:"center",padding:"20px 0"}}>
+      <div style={{fontSize:"52px",marginBottom:"12px"}}>✅</div>
+      <p style={{margin:"0 0 4px",fontSize:"16px",fontWeight:700,color:"var(--text)"}}>Transfer Berhasil!</p>
+      <p style={{margin:"0 0 4px",fontSize:"13px",color:"var(--text-muted)"}}>
+        {fmt(parseFloat(amount))} dari <strong>{fromAccount?.name}</strong>
+      </p>
+      <p style={{margin:"0 0 20px",fontSize:"13px",color:"var(--text-muted)"}}>
+        ke <strong>{toAccount?.name}</strong>
+      </p>
+      <div style={{padding:"12px",borderRadius:"12px",background:"var(--bg)",marginBottom:"16px",textAlign:"left"}}>
+        <p style={{margin:"0 0 6px",fontSize:"12px",fontWeight:700,color:"var(--text-muted)"}}>2 transaksi dicatat otomatis:</p>
+        <p style={{margin:"0 0 4px",fontSize:"12px",color:"#ef4444"}}>💸 -{fmt(parseFloat(amount))} dari {fromAccount?.name}</p>
+        <p style={{margin:0,fontSize:"12px",color:"#10b981"}}>💰 +{fmt(parseFloat(amount))} ke {toAccount?.name}</p>
+      </div>
+      <button onClick={onClose}
+        style={{width:"100%",padding:"12px",borderRadius:"12px",border:"none",background:"var(--primary)",color:"#fff",fontSize:"14px",fontWeight:700,cursor:"pointer"}}>
+        Selesai
+      </button>
+    </div>
+  );
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:"16px"}}>
+      {/* From → To visual */}
+      <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+        <div style={{flex:1,padding:"12px",borderRadius:"12px",background:"#ef444415",border:"1px solid #ef444433",textAlign:"center"}}>
+          <p style={{margin:"0 0 2px",fontSize:"10px",color:"#ef4444",fontWeight:700,textTransform:"uppercase"}}>Dari</p>
+          <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{fromAccount?.name||"Pilih akun"}</p>
+          {fromAccount&&<p style={{margin:"2px 0 0",fontSize:"11px",color:"var(--text-muted)"}}>{fmtF(fromAccount.balance)}</p>}
+        </div>
+        <div style={{fontSize:"24px",flexShrink:0}}>→</div>
+        <div style={{flex:1,padding:"12px",borderRadius:"12px",background:"#10b98115",border:"1px solid #10b98133",textAlign:"center"}}>
+          <p style={{margin:"0 0 2px",fontSize:"10px",color:"#10b981",fontWeight:700,textTransform:"uppercase"}}>Ke</p>
+          <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"var(--text)"}}>{toAccount?.name||"Pilih akun"}</p>
+          {toAccount&&<p style={{margin:"2px 0 0",fontSize:"11px",color:"var(--text-muted)"}}>{fmtF(toAccount.balance)}</p>}
+        </div>
+      </div>
+
+      {/* From account */}
+      <div>
+        <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>Dari Akun</label>
+        <select value={fromAcc} onChange={e=>setFromAcc(e.target.value)}
+          style={{width:"100%",padding:"10px 12px",borderRadius:"10px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"14px"}}>
+          {accounts.map(a=>(
+            <option key={a.id} value={a.id}>{a.name} ({fmtF(a.balance)})</option>
+          ))}
+        </select>
+      </div>
+
+      {/* To account */}
+      <div>
+        <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>Ke Akun</label>
+        <select value={toAcc} onChange={e=>setToAcc(e.target.value)}
+          style={{width:"100%",padding:"10px 12px",borderRadius:"10px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"14px"}}>
+          {accounts.map(a=>(
+            <option key={a.id} value={a.id} disabled={a.id===fromAcc}>{a.name} ({fmtF(a.balance)})</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Amount */}
+      <div>
+        <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>Nominal (Rp)</label>
+        <input value={amount} onChange={e=>setAmount(e.target.value)} type="number" placeholder="0"
+          style={{width:"100%",padding:"11px 12px",borderRadius:"10px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"18px",fontWeight:700,boxSizing:"border-box",textAlign:"center"}}/>
+        {/* Quick amounts */}
+        <div style={{display:"flex",gap:"6px",marginTop:"8px",flexWrap:"wrap"}}>
+          {[100000,500000,1000000,5000000].map(v=>(
+            <button key={v} onClick={()=>setAmount(String(v))}
+              style={{padding:"5px 10px",borderRadius:"7px",border:`1px solid ${amount===String(v)?"var(--primary)":"var(--border)"}`,
+                background:amount===String(v)?"var(--primary)22":"transparent",
+                cursor:"pointer",fontSize:"11px",fontWeight:600,
+                color:amount===String(v)?"var(--primary)":"var(--text-muted)"}}>
+              {fmt(v)}
+            </button>
+          ))}
+          {fromAccount&&fromAccount.balance>0&&(
+            <button onClick={()=>setAmount(String(Math.abs(fromAccount.balance)))}
+              style={{padding:"5px 10px",borderRadius:"7px",border:"1px solid var(--border)",background:"transparent",cursor:"pointer",fontSize:"11px",fontWeight:600,color:"var(--text-muted)"}}>
+              Semua ({fmt(Math.abs(fromAccount.balance))})
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Note */}
+      <div>
+        <label style={{fontSize:"12px",fontWeight:600,color:"var(--text-muted)",display:"block",marginBottom:"6px"}}>Keterangan</label>
+        <input value={note} onChange={e=>setNote(e.target.value)} type="text"
+          style={{width:"100%",padding:"10px 12px",borderRadius:"10px",border:"1.5px solid var(--border)",background:"var(--bg)",color:"var(--text)",fontSize:"14px",boxSizing:"border-box"}}/>
+      </div>
+
+      {/* Preview */}
+      {amount&&parseFloat(amount)>0&&fromAccount&&toAccount&&(
+        <div style={{padding:"12px",borderRadius:"12px",background:"var(--bg)",border:"1px solid var(--border)"}}>
+          <p style={{margin:"0 0 8px",fontSize:"12px",fontWeight:700,color:"var(--text-muted)"}}>Preview setelah transfer:</p>
+          <div style={{display:"flex",justifyContent:"space-between"}}>
+            <div>
+              <p style={{margin:0,fontSize:"11px",color:"var(--text-muted)"}}>{fromAccount.name}</p>
+              <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"#ef4444"}}>{fmtF(fromAccount.balance-parseFloat(amount))}</p>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <p style={{margin:0,fontSize:"11px",color:"var(--text-muted)"}}>{toAccount.name}</p>
+              <p style={{margin:0,fontSize:"13px",fontWeight:700,color:"#10b981"}}>{fmtF(toAccount.balance+parseFloat(amount))}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <button onClick={handleTransfer}
+        disabled={loading||!amount||parseFloat(amount)<=0||fromAcc===toAcc}
+        style={{padding:"13px",borderRadius:"12px",border:"none",
+          background:(!amount||parseFloat(amount)<=0||fromAcc===toAcc)?"var(--border)":"var(--primary)",
+          color:(!amount||parseFloat(amount)<=0||fromAcc===toAcc)?"var(--text-muted)":"#fff",
+          fontSize:"15px",fontWeight:700,cursor:"pointer",opacity:loading?0.7:1}}>
+        {loading?"Memproses...":"🔄 Transfer Sekarang"}
+      </button>
+    </div>
+  );
+}
+
+function FAB({onAdd, onTransfer}) {
+  const [open, setOpen] = useState(false);
+  return(
+    <div style={{position:"fixed",bottom:"80px",right:"20px",zIndex:100,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:"10px"}}>
+      {open&&(
+        <>
+          <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+            <span style={{background:"var(--card-bg)",padding:"5px 12px",borderRadius:"20px",fontSize:"12px",fontWeight:600,color:"var(--text)",boxShadow:"var(--shadow)",whiteSpace:"nowrap"}}>Transfer Akun</span>
+            <button onClick={()=>{setOpen(false);onTransfer();}}
+              style={{width:"46px",height:"46px",borderRadius:"14px",background:"#10b981",border:"none",color:"#fff",fontSize:"20px",cursor:"pointer",boxShadow:"0 4px 16px #10b98166",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              🔄
+            </button>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+            <span style={{background:"var(--card-bg)",padding:"5px 12px",borderRadius:"20px",fontSize:"12px",fontWeight:600,color:"var(--text)",boxShadow:"var(--shadow)",whiteSpace:"nowrap"}}>Tambah Transaksi</span>
+            <button onClick={()=>{setOpen(false);onAdd();}}
+              style={{width:"46px",height:"46px",borderRadius:"14px",background:"var(--primary)",border:"none",color:"#fff",fontSize:"22px",cursor:"pointer",boxShadow:"0 4px 16px var(--primary)66",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              +
+            </button>
+          </div>
+        </>
+      )}
+      {/* Main FAB */}
+      <button onClick={()=>setOpen(!open)}
+        style={{width:"56px",height:"56px",borderRadius:"18px",background:"var(--primary)",border:"none",color:"#fff",fontSize:"24px",cursor:"pointer",boxShadow:"0 4px 20px var(--primary)88",display:"flex",alignItems:"center",justifyContent:"center",transition:"transform 0.2s",transform:open?"rotate(45deg)":"rotate(0deg)"}}>
+        +
+      </button>
+    </div>
+  );
 }
 
 function BottomNav({tab,setTab}) {
@@ -2164,12 +2525,17 @@ export default function App() {
         {tab === "recurring"    && <RecurringPage />}
         {tab === "settings"     && <SettingsPage />}
 
-        <FAB onClick={() => setShowFAB(true)} />
+        <FAB onAdd={() => setShowFAB(true)} onTransfer={() => setShowTransfer(true)} />
         <BottomNav tab={tab} setTab={setTab} />
 
         {showFAB && (
           <Modal title="Tambah Transaksi" onClose={() => setShowFAB(false)}>
             <TransactionForm onSave={saveTx} onClose={() => setShowFAB(false)} />
+          </Modal>
+        )}
+        {showTransfer && (
+          <Modal title="🔄 Transfer Antar Akun" onClose={() => setShowTransfer(false)}>
+            <TransferModal onClose={() => setShowTransfer(false)} />
           </Modal>
         )}
       </div>
