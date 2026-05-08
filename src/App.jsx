@@ -618,8 +618,12 @@ function GoalLinker({form, set}) {
 
 function TransactionForm({onSave,onClose,initial}) {
   const {categories,accounts}=useContext(AppContext);
-  const [form,setForm]=useState(initial||{amount:"",type:"expense",category:"c4",account:"a1",date:new Date().toISOString().split("T")[0],note:"",tags:""});
+  const [form,setForm]=useState(initial ? {...initial, goalId:initial.goalId||""} : {amount:"",type:"expense",category:"c4",account:"",date:new Date().toISOString().split("T")[0],note:"",tags:"",goalId:""});
   const set=(k,v)=>setForm(p=>({...p,[k]:v}));
+  // Set default account to first available
+  useEffect(()=>{
+    if(!form.account && accounts.length>0) set("account", accounts[0].id);
+  },[accounts]);
   const filteredCats=categories.filter(c=>c.type===form.type);
   return(
     <div style={{display:"flex",flexDirection:"column",gap:"14px"}}>
@@ -699,8 +703,15 @@ function TransactionsPage() {
   const del=id=>setConfirmId(id);
   const doDelete=async()=>{
     const tx=transactions.find(t=>t.id===confirmId);
-    if(tx) await applyTxToAccount(tx,-1); // reverse effect on account
-    setTransactions(p=>p.filter(t=>t.id!==confirmId));
+    if(tx) {
+      await applyTxToAccount(tx,-1); // reverse balance
+      await txCol.remove(tx.id);   // delete from Firestore
+      // Reverse goal progress if linked
+      if(tx.goalId && tx.type==="expense") {
+        const goal = goals.find(g=>g.id===tx.goalId);
+        if(goal) goalCol.update(goal.id, {...goal, current: Math.max(0,(goal.current||0)-tx.amount)});
+      }
+    }
     setConfirmId(null);
   };
   return(
