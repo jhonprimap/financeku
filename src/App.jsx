@@ -71,256 +71,8 @@ const INITIAL_GOALS = [
 const fmt  = n => { if(Math.abs(n)>=1e9) return `Rp ${(n/1e9).toFixed(1)}M`; if(Math.abs(n)>=1e6) return `Rp ${(n/1e6).toFixed(1)}jt`; return `Rp ${Math.abs(n).toLocaleString("id-ID")}`; };
 const fmtF = n => { const f=Math.abs(n).toLocaleString("id-ID"); return n<0?`-Rp ${f}`:`Rp ${f}`; };
 
-function hexToRgb(hex) {
-  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
-  return `${r},${g},${b}`;
-}
 
 // ─── Financial Health Score ───────────────────────────────────────────────────
-function computeHealthScore(transactions, accounts, goals) {
-  const thisMonth   = transactions.filter(t=>t.date.startsWith("2025-06"));
-  const income      = thisMonth.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
-  const expense     = thisMonth.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
-  const savings     = income - expense;
-  const totalDebt   = Math.abs(accounts.filter(a=>a.balance<0).reduce((s,a)=>s+a.balance,0));
-  const ccLimit     = accounts.filter(a=>a.type==="credit_card").reduce((s,a)=>s+a.limit,0);
-  const ccUsed      = accounts.filter(a=>a.type==="credit_card").reduce((s,a)=>s+Math.abs(a.balance),0);
-  const emergencyFund = accounts.filter(a=>a.type==="bank").reduce((s,a)=>s+a.balance,0);
-
-  const savingRate  = income>0 ? (savings/income)*100 : 0;
-  const efMonths    = expense>0 ? emergencyFund/expense : 0;
-  const dti         = income>0 ? (totalDebt/(income*12))*100 : 100;
-  const ccUtil      = ccLimit>0 ? (ccUsed/ccLimit)*100 : 0;
-  const avgGoal     = goals.length>0 ? goals.reduce((s,g)=>s+(g.current/g.target),0)/goals.length*100 : 0;
-
-  const savingScore = Math.min(30,(savingRate/20)*30);
-  const efScore     = Math.min(25,(efMonths/6)*25);
-  const dtiScore    = Math.max(0,20-(dti/40)*20);
-  const ccScore     = Math.max(0,15-(ccUtil/30)*15);
-  const goalScore   = Math.min(10,(avgGoal/100)*10);
-  const total       = Math.round(savingScore+efScore+dtiScore+ccScore+goalScore);
-
-  return {
-    total,
-    grade: total>=85?"A":total>=70?"B":total>=55?"C":total>=40?"D":"E",
-    color: total>=85?"#10b981":total>=70?"#3b82f6":total>=55?"#f59e0b":total>=40?"#f97316":"#ef4444",
-    label: total>=85?"Excellent 🌟":total>=70?"Bagus 👍":total>=55?"Cukup 📈":total>=40?"Perlu Perhatian ⚠️":"Kritis 🚨",
-    breakdown: [
-      { label:"Rasio Tabungan",  score:Math.round(savingScore), max:30, value:`${savingRate.toFixed(0)}%`,  tip:savingRate<20?"Targetkan menabung ≥20% dari penghasilan":"Rasio tabungan sangat baik!" },
-      { label:"Dana Darurat",    score:Math.round(efScore),     max:25, value:`${efMonths.toFixed(1)}x`,   tip:efMonths<6?`Butuh ${fmt(Math.round((6-efMonths)*expense))} lagi untuk 6 bulan`:"Dana darurat sudah aman!" },
-      { label:"Rasio Utang/DTI", score:Math.round(dtiScore),    max:20, value:`${dti.toFixed(0)}%`,        tip:dti>40?"Pertimbangkan pelunasan utang lebih cepat":"Debt-to-income dalam batas sehat" },
-      { label:"Utilisasi KK",    score:Math.round(ccScore),     max:15, value:`${ccUtil.toFixed(0)}%`,     tip:ccUtil>30?"Kurangi penggunaan kartu kredit di bawah 30%":"Penggunaan kartu kredit aman" },
-      { label:"Progress Target", score:Math.round(goalScore),   max:10, value:`${avgGoal.toFixed(0)}%`,    tip:avgGoal<50?"Tingkatkan alokasi ke tujuan finansial":"Terus pertahankan progres ini!" },
-    ],
-    savingRate, efMonths, dti, ccUtil, avgGoal,
-  };
-}
-
-// ─── Health Score Widget ──────────────────────────────────────────────────────
-function HealthScoreWidget({ score }) {
-  const [expanded, setExpanded] = useState(false);
-  const circumference = 2*Math.PI*40;
-  const dash = (score.total/100)*circumference;
-
-  return (
-    <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"16px"}}>
-        <div>
-          <h3 style={{margin:"0 0 2px",fontSize:"15px",fontWeight:700,color:"var(--text)"}}>💊 Financial Health Score</h3>
-          <span style={{fontSize:"12px",fontWeight:700,color:score.color}}>{score.label}</span>
-        </div>
-        <button onClick={()=>setExpanded(!expanded)} style={{fontSize:"11px",padding:"5px 10px",borderRadius:"8px",border:"1px solid var(--border)",background:"transparent",color:"var(--text-muted)",cursor:"pointer",fontWeight:600}}>
-          {expanded?"Tutup ▲":"Detail ▼"}
-        </button>
-      </div>
-
-      <div style={{display:"flex",alignItems:"center",gap:"20px"}}>
-        {/* Ring gauge */}
-        <div style={{position:"relative",flexShrink:0,width:"96px",height:"96px"}}>
-          <svg width="96" height="96" viewBox="0 0 96 96">
-            <circle cx="48" cy="48" r="40" fill="none" stroke="var(--border)" strokeWidth="9"/>
-            <circle cx="48" cy="48" r="40" fill="none" stroke={score.color} strokeWidth="9"
-              strokeDasharray={`${dash} ${circumference}`} strokeLinecap="round"
-              transform="rotate(-90 48 48)" style={{transition:"stroke-dasharray 1.2s ease"}}/>
-          </svg>
-          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-            <span style={{fontSize:"22px",fontWeight:900,color:score.color,lineHeight:1}}>{score.total}</span>
-            <span style={{fontSize:"14px",fontWeight:800,color:score.color}}>{score.grade}</span>
-          </div>
-        </div>
-
-        {/* Mini bars */}
-        <div style={{flex:1,display:"flex",flexDirection:"column",gap:"8px"}}>
-          {score.breakdown.map((b,i)=>(
-            <div key={i}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:"3px"}}>
-                <span style={{fontSize:"10px",color:"var(--text-muted)",fontWeight:600}}>{b.label}</span>
-                <span style={{fontSize:"10px",fontWeight:700,color:"var(--text)"}}>{b.score}/{b.max}</span>
-              </div>
-              <div style={{height:"5px",background:"var(--border)",borderRadius:"3px",overflow:"hidden"}}>
-                <div style={{height:"100%",width:`${(b.score/b.max)*100}%`,background:score.color,borderRadius:"3px",transition:"width 1s ease"}}/>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Expanded tips */}
-      {expanded && (
-        <div style={{marginTop:"16px",paddingTop:"16px",borderTop:"1px solid var(--border)",display:"flex",flexDirection:"column",gap:"12px"}}>
-          <p style={{margin:"0 0 4px",fontSize:"12px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>Analisis Detail</p>
-          {score.breakdown.map((b,i)=>{
-            const pct=(b.score/b.max)*100;
-            const status=pct>=80?"✅":pct>=50?"⚠️":"🔴";
-            return(
-              <div key={i} style={{display:"flex",gap:"10px",alignItems:"flex-start",padding:"10px",background:"var(--bg)",borderRadius:"12px"}}>
-                <div style={{width:"36px",height:"36px",borderRadius:"8px",background:`rgba(${hexToRgb(score.color)},0.15)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <span style={{fontSize:"15px"}}>{status}</span>
-                </div>
-                <div style={{flex:1}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"2px"}}>
-                    <span style={{fontSize:"12px",fontWeight:700,color:"var(--text)"}}>{b.label}</span>
-                    <span style={{fontSize:"12px",fontWeight:800,color:score.color}}>{b.value}</span>
-                  </div>
-                  <p style={{margin:0,fontSize:"11px",color:"var(--text-muted)",lineHeight:1.5}}>{b.tip}</p>
-                </div>
-              </div>
-            );
-          })}
-          <div style={{padding:"10px 12px",background:`rgba(${hexToRgb(score.color)},0.1)`,borderRadius:"10px",border:`1px solid rgba(${hexToRgb(score.color)},0.3)`}}>
-            <p style={{margin:0,fontSize:"11px",color:score.color,fontWeight:600,lineHeight:1.5}}>
-              💡 Skor dihitung dari: rasio tabungan (30 poin), dana darurat (25 poin), rasio utang (20 poin), utilisasi kartu kredit (15 poin), dan progres target finansial (10 poin).
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Expense Heatmap ──────────────────────────────────────────────────────────
-function ExpenseHeatmap({ transactions, primaryColor }) {
-  const [hoveredDay, setHoveredDay] = useState(null);
-
-  const dailyExpense = useMemo(()=>{
-    const map={};
-    transactions.filter(t=>t.type==="expense"&&t.date.startsWith("2025-06")).forEach(t=>{
-      const d=parseInt(t.date.split("-")[2]);
-      map[d]=(map[d]||0)+t.amount;
-    });
-    return map;
-  },[transactions]);
-
-  const dailyTxns = useMemo(()=>{
-    const map={};
-    transactions.filter(t=>t.type==="expense"&&t.date.startsWith("2025-06")).forEach(t=>{
-      const d=parseInt(t.date.split("-")[2]);
-      if(!map[d]) map[d]=[];
-      map[d].push(t);
-    });
-    return map;
-  },[transactions]);
-
-  const maxVal = Math.max(...Object.values(dailyExpense),1);
-  const firstDow = new Date(2025,5,1).getDay();
-  const daysInMonth = 30;
-  const dayNames=["Min","Sen","Sel","Rab","Kam","Jum","Sab"];
-
-  const getOpacity = amt => {
-    if(!amt) return 0.07;
-    const i=amt/maxVal;
-    if(i>0.7) return 0.95;
-    if(i>0.4) return 0.65;
-    if(i>0.15) return 0.38;
-    return 0.18;
-  };
-
-  const cells=[];
-  for(let i=0;i<firstDow;i++) cells.push(null);
-  for(let d=1;d<=daysInMonth;d++) cells.push(d);
-
-  const topDays=Object.entries(dailyExpense).sort((a,b)=>b[1]-a[1]).slice(0,3);
-
-  return (
-    <div>
-      {/* Day-of-week labels */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"3px",marginBottom:"5px"}}>
-        {dayNames.map(d=>(
-          <div key={d} style={{textAlign:"center",fontSize:"9px",color:"var(--text-muted)",fontWeight:700}}>{d}</div>
-        ))}
-      </div>
-
-      {/* Calendar cells */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"3px",position:"relative"}}>
-        {cells.map((day,i)=>{
-          if(!day) return <div key={`e${i}`}/>;
-          const amt=dailyExpense[day]||0;
-          const isHov=hoveredDay===day;
-          const rgb=hexToRgb(primaryColor);
-          return(
-            <div key={day}
-              onMouseEnter={()=>setHoveredDay(day)}
-              onMouseLeave={()=>setHoveredDay(null)}
-              style={{
-                position:"relative",aspectRatio:"1",borderRadius:"7px",
-                background:`rgba(${rgb},${getOpacity(amt)})`,
-                border:isHov?`2px solid ${primaryColor}`:"2px solid transparent",
-                cursor:amt?"pointer":"default",
-                transition:"all 0.15s",
-                display:"flex",alignItems:"center",justifyContent:"center",
-              }}>
-              <span style={{fontSize:"9px",color:amt>maxVal*0.5?"#fff":"var(--text-muted)",fontWeight:600,userSelect:"none"}}>{day}</span>
-              {/* Tooltip */}
-              {isHov && (
-                <div style={{
-                  position:"absolute",bottom:"115%",left:"50%",transform:"translateX(-50%)",
-                  background:"var(--text)",color:"var(--card-bg)",
-                  padding:"6px 10px",borderRadius:"8px",
-                  fontSize:"11px",fontWeight:700,whiteSpace:"nowrap",
-                  zIndex:50,pointerEvents:"none",
-                  boxShadow:"0 4px 12px rgba(0,0,0,0.2)"
-                }}>
-                  {amt>0 ? <>📅 {day} Jun<br/>{fmt(amt)}</> : `${day} Jun — Tidak ada pengeluaran`}
-                  <div style={{position:"absolute",top:"100%",left:"50%",transform:"translateX(-50%)",
-                    width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",
-                    borderTop:`5px solid var(--text)`}}/>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Legend */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:"5px",marginTop:"10px"}}>
-        <span style={{fontSize:"10px",color:"var(--text-muted)"}}>Hemat</span>
-        {[0.12,0.32,0.58,0.88].map((op,i)=>(
-          <div key={i} style={{width:"13px",height:"13px",borderRadius:"4px",background:`rgba(${hexToRgb(primaryColor)},${op})`}}/>
-        ))}
-        <span style={{fontSize:"10px",color:"var(--text-muted)"}}>Boros</span>
-      </div>
-
-      {/* Top spending days */}
-      {topDays.length>0 && (
-        <div style={{marginTop:"14px",paddingTop:"14px",borderTop:"1px solid var(--border)"}}>
-          <p style={{margin:"0 0 8px",fontSize:"11px",fontWeight:700,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:"0.5px"}}>🔥 Hari Pengeluaran Terbesar</p>
-          {topDays.map(([day,amt])=>{
-            const dayTxns=dailyTxns[parseInt(day)]||[];
-            return(
-              <div key={day} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",borderRadius:"10px",background:"var(--bg)",marginBottom:"5px"}}>
-                <div>
-                  <span style={{fontSize:"12px",fontWeight:700,color:"var(--text)"}}>📅 {day} Juni 2025</span>
-                  <p style={{margin:"1px 0 0",fontSize:"10px",color:"var(--text-muted)"}}>{dayTxns.length} transaksi</p>
-                </div>
-                <span style={{fontSize:"13px",fontWeight:800,color:"#ef4444"}}>{fmt(amt)}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 function ProgressBar({pct,color}) {
@@ -446,7 +198,6 @@ function Dashboard() {
   const monthIncome      =thisMonth.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
   const monthExpense     =thisMonth.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
   const creditCards      =accounts.filter(a=>a.type==="credit_card");
-  const healthScore      =computeHealthScore(transactions,accounts,goals);
 
   const expenseByCat=categories
     .filter(c=>c.type==="expense")
@@ -473,8 +224,7 @@ function Dashboard() {
 
       <div style={{padding:"0 16px",display:"flex",flexDirection:"column",gap:"16px"}}>
 
-        {/* ── Financial Health Score ── */}
-        <HealthScoreWidget score={healthScore}/>
+
 
         {/* Pie chart */}
         <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)"}}>
@@ -494,16 +244,6 @@ function Dashboard() {
               ))}
             </div>
           </div>
-        </div>
-
-        {/* ── Expense Heatmap ── */}
-        <div style={{background:"var(--card-bg)",borderRadius:"20px",padding:"20px",boxShadow:"var(--shadow)"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
-            <h3 style={{margin:0,fontSize:"15px",fontWeight:700,color:"var(--text)"}}>🔥 Heatmap Pengeluaran</h3>
-            <span style={{fontSize:"11px",color:"var(--text-muted)",background:"var(--bg)",padding:"3px 8px",borderRadius:"6px",fontWeight:600}}>Juni 2025</span>
-          </div>
-          <p style={{margin:"0 0 14px",fontSize:"11px",color:"var(--text-muted)"}}>Hover pada tanggal untuk detail. Makin gelap = makin boros.</p>
-          <ExpenseHeatmap transactions={transactions} primaryColor={primaryColor}/>
         </div>
 
         {/* Bar chart */}
