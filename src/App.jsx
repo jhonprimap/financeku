@@ -1872,7 +1872,7 @@ function RecurringPage() {
   };
 
   // Record now: immediately create a transaction from this recurring
-  const recordNow = (rec) => {
+  const recordNow = async (rec) => {
     const tx = {
       id: `t${Date.now()}`,
       amount: rec.amount,
